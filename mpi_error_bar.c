@@ -137,7 +137,7 @@ void print_result(){
 	printf("kmax = %e, npts_k = %d\n", kmax, npts_k);
 	printf("npts_mu = %d\n", npts_mu);
 	printf("Amplitude factor deltaphi = %e\n", deltaphi);
-	printf("Used %s, %s\n", bessel_data_filename, transfer_T_data_filename);
+	printf("Used %s, %s, %s\n", bessel_data_filename, transfer_T_data_filename, transfer_E_data_filename);
 	printf("\n");
 	printf("Results: N_cos = %e, N_sin = %e\n", N_cos, N_sin);
 	printf("Results: sigma_cos = %e, sigma_sin = %e\n\n", sigma_cos, sigma_sin);
@@ -149,7 +149,7 @@ void initialise(){
 	// Load data. fixed_data.c
 	load_bessel();
 	load_transfer();
-	load_cls();
+	load_C();
 	load_BN();
 
 	printf("loaded\n");
