@@ -19,7 +19,7 @@ double deltaphi = 1.5714e-8;
 double fskyT = 0.76;
 double fskyE = 0.74;
 
-int do_polarisation = 0;
+const int do_polarisation = 0;
 
 //char *data_dir = "/fast/space/projects/dp002/jf334/data/";
 char *data_dir = "./data/";
@@ -357,3 +357,34 @@ double *get_noise(int pol){
 		return noise_EE;
 	}
 }
+
+void free_bessel(){
+	free_2D_array(bessel);
+}
+
+void free_transfer(){
+	free_2D_array(transfer_T);
+	if(do_polarisation == 1){
+		free_2D_array(transfer_E);
+	}
+}
+
+void free_C(){
+	free(C_TT);
+	if(do_polarisation == 1){
+		free(C_TE);
+		free(C_EE);
+	}
+}
+
+void free_BN(){
+	free(beam_TT);
+	free(noise_TT);
+	if(do_polarisation == 1){
+		free(beam_TE);
+		free(beam_EE);
+		free(noise_TE);
+		free(noise_EE);
+	}
+}
+

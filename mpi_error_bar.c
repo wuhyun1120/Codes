@@ -13,7 +13,6 @@
 #include "fixed_data.h"
 #include "io.h"
 
-
 static int lmin = 2;
 static int lmax = 2000;
 static int npts_l; 			//  = lmax - lmin + 1;
@@ -32,10 +31,12 @@ static int npts_x;
 
 static double omega = 1e2;
 
-static double **cos_tilde;
-static double **sin_tilde;
+static double ***cos_tilde;		// cos_tilde[polarisation][x][l]
+static double ***sin_tilde;
+static int npts_p;			// Number of polarisation data included
+static int npts_pp;			// e.g. 3 for TT, TE, EE
 
-static double *C_inv;
+static double **C;
 
 static double *gl_nodes, *gl_weights;
 static double **legendre;
@@ -127,6 +128,36 @@ void make_xvec(){
 
 }
 
+void prepare_C(){
+	/* Initialises the covariance matrix and incorporates the beam and noise */
+
+	// Load data. fixed_data.c
+	load_C();
+	load_BN();
+
+	// Note that Cls starts with l=0
+	C = create_2D_array(npts_pp, lmax);
+
+	int pp, l;
+	double *beam, *noise;
+	for(pp=0; pp<npts_pp; pp++){
+
+		C[pp] = get_C(pp);
+		beam = get_beam(pp);
+		noise = get_noise(pp);
+
+		// Incorporate the beam and noise
+		for(l=0; l<lmax; l++){
+			C[pp][l] += noise[l] / (beam[l] * beam[l]); 
+		}
+	}
+
+	// We no longer need the loaded data
+	free_C();
+	free_BN();
+
+}
+
 void print_result(){
 	/* Prints parameters and computed error bars*/
 	printf("Computing error bars for sinusodial shape functions\n");
@@ -149,8 +180,6 @@ void initialise(){
 	// Load data. fixed_data.c
 	load_bessel();
 	load_transfer();
-	load_C();
-	load_BN();
 
 	printf("loaded\n");
 	// Initialise some parameters and the x, k vectors
@@ -182,30 +211,31 @@ void initialise(){
 	end_i_j = npts_x_y;
 
 	// Allocate memory for tilde arrays
-	cos_tilde = create_2D_array(npts_x, npts_l);
-	sin_tilde = create_2D_array(npts_x, npts_l);
 
-}
+	if(do_polarisation == 0){
+		cos_tilde = (double ***) malloc(sizeof(double **));
+		cos_tilde[T] = create_2D_array(npts_x, npts_l);
+		sin_tilde = (double ***) malloc(sizeof(double **));
+		sin_tilde[T] = create_2D_array(npts_x, npts_l);
 
+		npts_p = 1;
+		npts_pp = 1; 	// Only C_TT used
 
-void precompute_C_inv(){
-	/* Incorporates the beam and noise effects to the power spectrum, and then computes C_inv[l] = (2l+1)/C[l]	*/
-	// Note this index l is the main l, varying from lmin to lmax
+	}else if(do_polarisation == 1){
+		cos_tilde = (double ***) malloc(2 * sizeof(double **));
+		cos_tilde[T] = create_2D_array(npts_x, npts_l);
+		cos_tilde[E] = create_2D_array(npts_x, npts_l);
+		sin_tilde = (double ***) malloc(2 * sizeof(double **));
+		sin_tilde[T] = create_2D_array(npts_x, npts_l);
+		sin_tilde[E] = create_2D_array(npts_x, npts_l);
 
-	C_inv = create_array(npts_l);
+		npts_p = 2;
+		npts_pp = 3;	// C_TT, C_TE, C_EE used
+	}		
 
-	int l;
-	for(l=0; l<npts_l; l++){
-		if (l + lmin - cl_lmin >= cl_npts_l){
-			printf("Cl file does not contain enough l's. Try again, you can do it!\n");
-			exit(1);
-		}else if (l + lmin - BN_lmin >= BN_npts_l){
-			printf("BN file does not contain enough l's. Try again, you can do it!\n");
-			exit(1);
-		}else{
-			C_inv[l] = (2 * (l + lmin) + 1) / (C[l + lmin - cl_lmin] + noise[l + lmin - BN_lmin] / pow(beam[l + lmin - BN_lmin], 2));
-		}
-	}
+	// Initialise the covariance matrix
+	prepare_C();
+
 }
 
 
@@ -213,10 +243,12 @@ void precompute_tilde(){
 	/* Evaluate sin_tilde(x,l) and cos_tilde(x,l) */
 
 	// Initialise to zero
-	int i, l;
-	for(i=0; i<npts_x; i++){
-		for(l=0; l<npts_l; l++){
-			cos_tilde[i][l] = sin_tilde[i][l] = 0;
+	int i, l, p;
+	for(p=0; p<npts_p; p++){
+		for(i=0; i<npts_x; i++){
+			for(l=0; l<npts_l; l++){
+					cos_tilde[p][i][l] = sin_tilde[p][i][l] = 0;
+			}
 		}
 	}
 
@@ -224,51 +256,90 @@ void precompute_tilde(){
 	// cos_tilde(x,l) = (2/pi) * integral{dk * cos(omega*k) * j_l(k*x) * Delta_l(k)}
 	// sin_tilde(x,l) = (2/pi) * integral{dk * sin(omega*k) * j_l(k*x) * Delta_l(k)}
 
+	double pref = 2e0/pi;
+
 	#pragma omp parallel private(i,l)
 	{
 		// Initialise GSL tools for interpolation and integration
 		gsl_spline *bessel_spline = gsl_spline_alloc(gsl_interp_linear, bessel_npts_x);
 		gsl_interp_accel *bessel_acc = gsl_interp_accel_alloc();
-		gsl_spline *spline = gsl_spline_alloc(gsl_interp_linear, npts_k);
-		gsl_interp_accel *acc = gsl_interp_accel_alloc();
-		double bes, trans;	// temporary variables
-		double *y1 = create_array(npts_k);
-		double *y2 = create_array(npts_k);
-		int n, k;
+		double bes;	// temporary variables
+		double **trans = (double **) malloc(npts_p * sizeof(double *));
+		int n, k, p;
 
 		#pragma omp for
 		for(n=start_i_l; n<end_i_l; n++){
 			i = i_l[n][0];
 			l = i_l[n][1];
 
-			gsl_spline_init(bessel_spline, bessel_xvec, &bessel[l + lmin - bessel_lmin + 1][0], bessel_npts_x);
-
-			for(k=0; k<npts_k; k++){
-				bes = gsl_spline_eval(bessel_spline, xvec[i] * kvec[k], bessel_acc);
-				trans = transfer[l + lmin - transfer_lmin + 1][k];
-
-				y1[k] = cos(omega * kvec[k]) * trans * bes;
-				y2[k] = sin(omega * kvec[k]) * trans * bes;
+			// Prepare bessel and transfer data vectors
+			gsl_spline_init(bessel_spline, bessel_xvec, get_bessel(l+lmin), bessel_npts_x);
+			for(p=0; p<npts_p; p++){
+				trans[p] = get_transfer(p, l+lmin);
 			}
 
+			// Perform the k integral
+			for(k=0; k<npts_k; k++){
+				bes = gsl_spline_eval(bessel_spline, xvec[i] * kvec[k], bessel_acc);
+
+				for(p=0; p<npts_p; p++){
+					cos_tilde[p][i][l] += step_k[k] * cos(omega * kvec[k]) * trans[p][k] * bes; 
+					sin_tilde[p][i][l] += step_k[k] * sin(omega * kvec[k]) * trans[p][k] * bes; 
+				}
+			}
+
+			// Multiply by 2/pi
+			for(p=0; p<npts_p; p++){
+				cos_tilde[p][i][l] *= pref;
+				sin_tilde[p][i][l] *= pref;
+			}
+			
 			gsl_interp_accel_reset(bessel_acc);
-
-			gsl_spline_init(spline, kvec, y1, npts_k);
-			cos_tilde[i][l] = (2e0/pi) * gsl_spline_eval_integ(spline, kmin, kmax, acc);
-			gsl_interp_accel_reset(acc);
-
-			gsl_spline_init(spline, kvec, y2, npts_k);
-			sin_tilde[i][l] = (2e0/pi) * gsl_spline_eval_integ(spline, kmin, kmax, acc);
-			gsl_interp_accel_reset(acc);
 		}
 
 		// Free the interpolaters
 		gsl_spline_free(bessel_spline);
 		gsl_interp_accel_free(bessel_acc);
-		gsl_spline_free(spline);
-		gsl_interp_accel_free(acc);
-
+		free(trans);
 	}
+}
+
+void orthogonalise_tilde(){
+	/* Orthogonalises the computed cos_tilde, sin_tilde so that C = I */
+
+	int x, l;
+
+	// Precompute 1/sqrt(C_TT) for computational efficiency
+	double *vec = create_array(npts_l);
+	for(l=0; l<npts_l; l++){
+		vec[l] = 1e0 / sqrt(C[TT][l+lmin]);
+	}
+
+	#pragma omp parallel for private(x,l)
+	for(x=0; x<npts_x; x++){
+		for(l=0; l<npts_l; l++){
+			cos_tilde[T][x][l] *= vec[l];
+			sin_tilde[T][x][l] *= vec[l];
+		}
+	}
+
+	if(do_polarisation == 1){
+		// Again precompute the denominator
+		for(l=0; l<npts_l; l++){
+			vec[l] *= 1e0 / sqrt(C[TT][l+lmin] * C[EE][l+lmin] - C[TE][l+lmin] * C[TE][l+lmin]);
+		}
+
+		#pragma omp parallel for private(x,l)
+		for(x=0; x<npts_x; x++){
+			for(l=0; l<npts_l; l++){
+				cos_tilde[E][x][l] = vec[l] * (C[TT][l+lmin] * cos_tilde[E][x][l] - C[TE][l+lmin] * cos_tilde[T][x][l]);
+				sin_tilde[E][x][l] = vec[l] * (C[TT][l+lmin] * sin_tilde[E][x][l] - C[TE][l+lmin] * sin_tilde[T][x][l]);
+			}
+		}
+	}
+
+	free_array(vec);
+
 }
 
 void compute_error_bars(){
@@ -305,10 +376,10 @@ void compute_error_bars(){
 				// Sum over l first
 				cc = cs = sc = ss = 0;
 				for(l=0; l<npts_l; l++){
-					cc += C_inv[l] * cos_tilde[i][l] * cos_tilde[j][l] * legendre[mu][l];
-					cs += C_inv[l] * cos_tilde[i][l] * sin_tilde[j][l] * legendre[mu][l];
-					sc += C_inv[l] * sin_tilde[i][l] * cos_tilde[j][l] * legendre[mu][l];
-					ss += C_inv[l] * sin_tilde[i][l] * sin_tilde[j][l] * legendre[mu][l];
+					cc += C_inv[l] * cos_tilde[T][i][l] * cos_tilde[T][j][l] * legendre[mu][l];
+					cs += C_inv[l] * cos_tilde[T][i][l] * sin_tilde[T][j][l] * legendre[mu][l];
+					sc += C_inv[l] * sin_tilde[T][i][l] * cos_tilde[T][j][l] * legendre[mu][l];
+					ss += C_inv[l] * sin_tilde[T][i][l] * sin_tilde[T][j][l] * legendre[mu][l];
 				}	
 
 				N_cos += gl_weights[mu] * dxdy * x2y2 * ((cc * cc * cc) + 3*(cc * ss * ss) - 3*(sc * sc * cc) - 3*(cs * cs * cc) + 6*(sc * cs * ss));
@@ -331,9 +402,8 @@ void multiple_omega(){
 	initialise();
 
 	precompute_C_inv();
-	free_array(C);
-	free_array(beam);
-	free_array(noise);
+	free_C();
+	free_BN();
 
 	// Use the Gauss-Legendre method for integrating mu
 	gl_nodes = create_array(npts_mu);
@@ -382,8 +452,8 @@ void bispectrum_plot(){
 
 	precompute_tilde();
 
-	free_2D_array(bessel);
-	free_2D_array(transfer);
+	free_bessel();
+	free_transfer();
 
 	double *b_cos = (double *) calloc(npts_l, sizeof(double));
 	double *b_sin = (double *) calloc(npts_l, sizeof(double));
@@ -393,8 +463,8 @@ void bispectrum_plot(){
 	#pragma omp parallel for private(l,i,c,s)
 	for(l=0; l<npts_l; l++){
 		for(i=0; i<npts_x; i++){
-			c = cos_tilde[i][l];
-			s = sin_tilde[i][l];
+			c = cos_tilde[T][i][l];
+			s = sin_tilde[T][i][l];
 			b_cos[l] += xvec[i] * xvec[i] * step_x[i] * (c*c*c - 3*c*s*s);
 			b_sin[l] += xvec[i] * xvec[i] * step_x[i] * (-s*s*s + 3*s*c*c);
 		}
@@ -409,13 +479,14 @@ void const_model(){
 
 	lmax = 200;
 	initialise();
+	double **transfer = create_2D_array(npts_l, npts_k);
 
 	// Large angle approximation for l<<200. Transfer(l,k) ~= (1/3)*bessel(l,tau0*k)
 	gsl_interp_accel *acc = gsl_interp_accel_alloc();
 	gsl_spline *spline = gsl_spline_alloc(gsl_interp_linear, bessel_npts_x);
 	int l, k;
 	for(l=0; l<npts_l; l++){
-		gsl_spline_init(spline, bessel_xvec, &bessel[l][0], bessel_npts_x);
+		gsl_spline_init(spline, bessel_xvec, get_bessel(l+lmin), bessel_npts_x);
 		for(k=0; k<transfer_npts_k; k++){
 			transfer[l][k] = (1e0/3e0) * gsl_spline_eval(spline, transfer_kvec[k] * tau0, acc);
 		}
@@ -424,8 +495,10 @@ void const_model(){
 
 	// S=cos(wk) for omega = 0 corresponds to the constant model
 	omega = 0;
-	precompute_tilde();
-	write_2D_array(cos_tilde, npts_x, npts_l, "const_tilde");
+
+	// **** THIS NEEDS TO BE CHANGED ****
+	precompute_tilde();	// Here large angle approx. to the transfer functions needs to be used
+	write_2D_array(cos_tilde[T], npts_x, npts_l, "const_tilde");
 
 
 	// Bispectrum
@@ -458,7 +531,7 @@ void const_model(){
 
 					b_const[ii][jj][kk] = 0;
 					for(i=0; i<npts_x; i++){
-						b_const[ii][jj][kk] += xint[i] * cos_tilde[i][ii] * cos_tilde[i][jj] * cos_tilde[i][kk];
+						b_const[ii][jj][kk] += xint[i] * cos_tilde[T][i][ii] * cos_tilde[T][i][jj] * cos_tilde[T][i][kk];
 					}
 
 					b_analytic[ii][jj][kk] = 1e0 / (27e0 * (2*l1+1) * (2*l2+1) * (2*l3+1)) * (1e0 / (l1+l2+l3+3e0) + 1e0 / (l1+l2+l3));
@@ -487,16 +560,15 @@ void error_bars(){
 	// Precompute sin_tilde(x) and cos_tilde(x)
 	precompute_tilde();
 	
-	free_2D_array(bessel);
-	free_2D_array(transfer);
+	free_bessel();
+	free_transfer();
 
 	// Incorporate BN effects to the power spectrum and compute (2l+1)/Cl
 	precompute_C_inv();
 	printf("Finished computing sin_tilde, cos_tilde. Elapsed time: %fs\n", (double)(clock() - start) / CLOCKS_PER_SEC);
 	
-	free_array(C);
-	free_array(beam);
-	free_array(noise);
+	free_C();
+	free_BN();
 	
 	// Use the Gauss-Legendre method for integrating mu
 	gl_nodes = create_array(npts_mu);
@@ -518,8 +590,8 @@ void error_bars(){
 	// Main computation
 	compute_error_bars();
 	
-	free_2D_array(cos_tilde);
-	free_2D_array(sin_tilde);
+	free_2D_array(cos_tilde[T]);
+	free_2D_array(sin_tilde[T]);
 	free_array(C_inv);
 	free_2D_array(legendre);
 	free_array(gl_nodes);
@@ -547,17 +619,17 @@ void write_qtilde_integrand(){
 	double ***cos_integrand = create_3D_array(npts_l_save, npts_x, npts_k);
 	double ***sin_integrand = create_3D_array(npts_l_save, npts_x, npts_k);
 
-	free_2D_array(cos_tilde);
-	free_2D_array(sin_tilde);
+	free_2D_array(cos_tilde[T]);
+	free_2D_array(sin_tilde[T]);
 
-	cos_tilde = create_2D_array(npts_x, npts_l_save);
-	sin_tilde = create_2D_array(npts_x, npts_l_save);
+	cos_tilde[T] = create_2D_array(npts_x, npts_l_save);
+	sin_tilde[T] = create_2D_array(npts_x, npts_l_save);
 
 	// Initialise to zero
 	int i, l;
 	for(i=0; i<npts_x; i++){
 		for(l=0; l<npts_l_save; l++){
-			cos_tilde[i][l] = sin_tilde[i][l] = 0;
+			cos_tilde[T][i][l] = sin_tilde[T][i][l] = 0;
 		}
 	}
 
@@ -572,7 +644,8 @@ void write_qtilde_integrand(){
 		gsl_interp_accel *bessel_acc = gsl_interp_accel_alloc();
 		gsl_spline *spline = gsl_spline_alloc(gsl_interp_linear, npts_k);
 		gsl_interp_accel *acc = gsl_interp_accel_alloc();
-		double bes, trans;	// temporary variables
+		double bes;	// temporary variables
+		double *transfer;
 		double *y1 = create_array(npts_k);
 		double *y2 = create_array(npts_k);
 		int k;
@@ -581,14 +654,14 @@ void write_qtilde_integrand(){
 		for(l=0; l<npts_l_save; l++){
 			for(i=0; i<npts_x; i++){
 
-				gsl_spline_init(bessel_spline, bessel_xvec, &bessel[l + lmin - bessel_lmin + 1][0], bessel_npts_x);
+				gsl_spline_init(bessel_spline, bessel_xvec, get_bessel(l+lmin), bessel_npts_x);
+				transfer = get_transfer(l+lmin);
 
 				for(k=0; k<npts_k; k++){
 					bes = gsl_spline_eval(bessel_spline, xvec[i] * kvec[k], bessel_acc);
-					trans = transfer[l + lmin - transfer_lmin + 1][k];
 
-					y1[k] = cos(omega * kvec[k]) * trans * bes;
-					y2[k] = sin(omega * kvec[k]) * trans * bes;
+					y1[k] = cos(omega * kvec[k]) * transfer[k] * bes;
+					y2[k] = sin(omega * kvec[k]) * transfer[k] * bes;
 
 					cos_integrand[l][i][k] = y1[k];
 					sin_integrand[l][i][k] = y2[k];
@@ -597,11 +670,11 @@ void write_qtilde_integrand(){
 				gsl_interp_accel_reset(bessel_acc);
 
 				gsl_spline_init(spline, kvec, y1, npts_k);
-				cos_tilde[i][l] = (2e0/pi) * gsl_spline_eval_integ(spline, kmin, kmax, acc);
+				cos_tilde[T][i][l] = (2e0/pi) * gsl_spline_eval_integ(spline, kmin, kmax, acc);
 				gsl_interp_accel_reset(acc);
 
 				gsl_spline_init(spline, kvec, y2, npts_k);
-				sin_tilde[i][l] = (2e0/pi) * gsl_spline_eval_integ(spline, kmin, kmax, acc);
+				sin_tilde[T][i][l] = (2e0/pi) * gsl_spline_eval_integ(spline, kmin, kmax, acc);
 				gsl_interp_accel_reset(acc);
 			}
 		}
@@ -660,34 +733,33 @@ void mpi_error_bars(int argc, char **argv){
 	MPI_Barrier(MPI_COMM_WORLD);
 
 	// In order to put the data together, we define temporary arrays
-	double **temp_cos_tilde = create_2D_array(npts_x, npts_l);
-	double **temp_sin_tilde = create_2D_array(npts_x, npts_l);
+	double **temp_cos_tilde[T] = create_2D_array(npts_x, npts_l);
+	double **temp_sin_tilde[T] = create_2D_array(npts_x, npts_l);
 
 	// MPI_Allreduce to incorporate calculated results
-	MPI_Allreduce(&cos_tilde[0][0], &temp_cos_tilde[0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	MPI_Allreduce(&sin_tilde[0][0], &temp_sin_tilde[0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+	MPI_Allreduce(&cos_tilde[T][0][0], &temp_cos_tilde[T][0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+	MPI_Allreduce(&sin_tilde[T][0][0], &temp_sin_tilde[T][0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 	
 	for(i=0; i<npts_x; i++){
 		for(l=0; l<npts_l; l++){
-			cos_tilde[i][l] = temp_cos_tilde[i][l];
-			sin_tilde[i][l] = temp_sin_tilde[i][l];
+			cos_tilde[T][i][l] = temp_cos_tilde[T][i][l];
+			sin_tilde[T][i][l] = temp_sin_tilde[T][i][l];
 		}
 	}
-	free_2D_array(temp_cos_tilde);
-	free_2D_array(temp_sin_tilde);
+	free_2D_array(temp_cos_tilde[T]);
+	free_2D_array(temp_sin_tilde[T]);
 
 	MPI_Barrier(MPI_COMM_WORLD);
 
 	// We no longer need bessel and transfer functions data
-	free_2D_array(bessel);
-	free_2D_array(transfer);
+	free_bessel();
+	free_transfer();
 
 	// Incorporate BN effects to the power spectrum and compute (2l+1)/Cl
 	precompute_C_inv();
 	
-//	free_array(C);
-//	free_array(beam);
-//	free_array(noise);
+	free_C();
+	free_BN();
 	
 	// Use the Gauss-Legendre method for integrating mu
 	gl_nodes = create_array(npts_mu);
@@ -731,15 +803,15 @@ void mpi_error_bars(int argc, char **argv){
 		print_result();
 
 		// Some intermediate data saving 
-		write_2D_array(cos_tilde, npts_x, npts_l, "cos_tilde_last");
-		write_2D_array(sin_tilde, npts_x, npts_l, "sin_tilde_last"); 	
+		write_2D_array(cos_tilde[T], npts_x, npts_l, "cos_tilde_last");
+		write_2D_array(sin_tilde[T], npts_x, npts_l, "sin_tilde_last"); 	
 		write_1D_array(xvec, npts_x, "xvec_last");
 
 
 	}
 	
-	free_2D_array(cos_tilde);
-	free_2D_array(sin_tilde);
+	free_2D_array(cos_tilde[T]);
+	free_2D_array(sin_tilde[T]);
 	free_array(C_inv);
 	free_2D_array(legendre);
 	free_array(gl_nodes);
@@ -775,9 +847,8 @@ void mpi_multiple_omega(int argc, char **argv){
 	end_i_j = (rank + 1) * (npts_x_y / nprocs) + fmin(rank + 1, npts_x_y % nprocs);
 
 	precompute_C_inv();
-	free_array(C);
-	free_array(beam);
-	free_array(noise);
+	free_C();
+	free_BN();
 
 	// Use the Gauss-Legendre method for integrating mu
 	gl_nodes = create_array(npts_mu);
@@ -796,8 +867,8 @@ void mpi_multiple_omega(int argc, char **argv){
 	MPI_Barrier(MPI_COMM_WORLD);
 
 	// Temporary variables for synchronising qtildes
-	double **temp_cos_tilde = create_2D_array(npts_x, npts_l);
-	double **temp_sin_tilde = create_2D_array(npts_x, npts_l);
+	double **temp_cos_tilde[T] = create_2D_array(npts_x, npts_l);
+	double **temp_sin_tilde[T] = create_2D_array(npts_x, npts_l);
 	
 	int o, npts_omega = 41;
 	double **results = create_2D_array(npts_omega, 3);
@@ -808,13 +879,13 @@ void mpi_multiple_omega(int argc, char **argv){
 		// Precompute cos_tilde, sin_tilde and synchronise
 		precompute_tilde();
 
-		MPI_Allreduce(&cos_tilde[0][0], &temp_cos_tilde[0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-		MPI_Allreduce(&sin_tilde[0][0], &temp_sin_tilde[0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+		MPI_Allreduce(&cos_tilde[T][0][0], &temp_cos_tilde[T][0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+		MPI_Allreduce(&sin_tilde[T][0][0], &temp_sin_tilde[T][0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
 		for(i=0; i<npts_x; i++){
 			for(l=0; l<npts_l; l++){
-				cos_tilde[i][l] = temp_cos_tilde[i][l];
-				sin_tilde[i][l] = temp_sin_tilde[i][l];
+				cos_tilde[T][i][l] = temp_cos_tilde[T][i][l];
+				sin_tilde[T][i][l] = temp_sin_tilde[T][i][l];
 			}
 		}
 
@@ -878,28 +949,28 @@ void mpi_bispectrum(int argc, char **argv){
 	MPI_Barrier(MPI_COMM_WORLD);
 
 	// In order to put the data together, we define temporary arrays
-	double **temp_cos_tilde = create_2D_array(npts_x, npts_l);
-	double **temp_sin_tilde = create_2D_array(npts_x, npts_l);
+	double **temp_cos_tilde[T] = create_2D_array(npts_x, npts_l);
+	double **temp_sin_tilde[T] = create_2D_array(npts_x, npts_l);
 
 	// MPI_Allreduce to incorporate calculated results
-	MPI_Allreduce(&cos_tilde[0][0], &temp_cos_tilde[0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	MPI_Allreduce(&sin_tilde[0][0], &temp_sin_tilde[0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+	MPI_Allreduce(&cos_tilde[T][0][0], &temp_cos_tilde[T][0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+	MPI_Allreduce(&sin_tilde[T][0][0], &temp_sin_tilde[T][0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
 	int i, l;	
 	for(i=0; i<npts_x; i++){
 		for(l=0; l<npts_l; l++){
-			cos_tilde[i][l] = temp_cos_tilde[i][l];
-			sin_tilde[i][l] = temp_sin_tilde[i][l];
+			cos_tilde[T][i][l] = temp_cos_tilde[T][i][l];
+			sin_tilde[T][i][l] = temp_sin_tilde[T][i][l];
 		}
 	}
-	free_2D_array(temp_cos_tilde);
-	free_2D_array(temp_sin_tilde);
+	free_2D_array(temp_cos_tilde[T]);
+	free_2D_array(temp_sin_tilde[T]);
 
 	MPI_Barrier(MPI_COMM_WORLD);
 
 	// We no longer need bessel and transfer functions data
-	free_2D_array(bessel);
-	free_2D_array(transfer);
+	free_bessel();
+	free_transfer();
 
 	// Bispectrum
 	int lstep = 10;
@@ -940,7 +1011,7 @@ void mpi_bispectrum(int argc, char **argv){
 			for (l3=0; l3<npts_l; l3++){
 				if (lstep*(l1+l2)+lmin >= lstep*l3 && lstep*(l2+l3)+lmin >= lstep*l1 && lstep*(l3+l1)+lmin >= lstep*l2){ 
 					for(i=0; i<npts_x; i++){
-						y[i] = xvec[i] * xvec[i] * (cos_tilde[i][lstep*l1]*cos_tilde[i][lstep*l2]*cos_tilde[i][lstep*l3] - cos_tilde[i][lstep*l1]*sin_tilde[i][lstep*l2]*sin_tilde[i][lstep*l3] - sin_tilde[i][lstep*l1]*cos_tilde[i][lstep*l2]*sin_tilde[i][lstep*l3] - sin_tilde[i][lstep*l1]*sin_tilde[i][lstep*l2]*cos_tilde[i][lstep*l3]);
+						y[i] = xvec[i] * xvec[i] * (cos_tilde[T][i][lstep*l1]*cos_tilde[T][i][lstep*l2]*cos_tilde[T][i][lstep*l3] - cos_tilde[T][i][lstep*l1]*sin_tilde[T][i][lstep*l2]*sin_tilde[T][i][lstep*l3] - sin_tilde[T][i][lstep*l1]*cos_tilde[T][i][lstep*l2]*sin_tilde[T][i][lstep*l3] - sin_tilde[T][i][lstep*l1]*sin_tilde[T][i][lstep*l2]*cos_tilde[T][i][lstep*l3]);
 
 					}
 
@@ -981,8 +1052,8 @@ void mpi_bispectrum(int argc, char **argv){
 		printf("Results saved to file %s\n", filename);
 	}
 	
-	free_2D_array(cos_tilde);
-	free_2D_array(sin_tilde);
+	free_2D_array(cos_tilde[T]);
+	free_2D_array(sin_tilde[T]);
 
 
 	MPI_Finalize();

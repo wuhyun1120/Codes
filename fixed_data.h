@@ -17,6 +17,8 @@ extern double deltaphi;
 extern double fskyT;
 extern double fskyE;
 
+extern const int do_polarisation;
+
 extern char data_dir[MAXLEN];
 
 extern char bessel_data_filename[MAXLEN];
@@ -48,5 +50,11 @@ extern double *get_transfer(int pol, int l);
 extern double *get_C(int pol);
 extern double *get_beam(int pol);
 extern double *get_noise(int pol);
+
+extern void free_bessel();
+extern void free_transfer();
+extern void free_C();
+extern void free_BN();
+
 
 #endif /* FIXED_DATA_H */
