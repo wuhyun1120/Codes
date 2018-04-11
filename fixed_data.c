@@ -87,11 +87,6 @@ void load_bessel(){
 		}
 	}
 
-	// Now shift the array so that the first row contains actual data
-	for(l=0; l<bessel_npts_l; l++){
-		bessel[l] = bessel[l+1];
-	}
-
 //	 printf("tau0 = %e, xmin = %e, xmax = %e, lmin = %d, lmax = %d\n", tau0, bessel_xvec[0], bessel_xvec[bessel_npts_x-1], bessel_lmin, bessel_lmax);
 }
 
@@ -138,11 +133,6 @@ void load_transfer(){
 		}else{
 			transfer[l][0] = 0;
 		}
-	}
-
-	// Now shift the array so that the first row contains actual data
-	for(l=0; l<transfer_npts_l; l++){
-		transfer[l] = transfer[l+1];
 	}
 
 //	printf("Transfer. kmin = %e, kmax = %e, lmin = %d, lmax = %d\n", transfer_kvec[0], transfer_kvec[transfer_npts_k-1], transfer_lmin, transfer_lmax);

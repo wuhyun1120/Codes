@@ -241,11 +241,11 @@ void precompute_tilde(){
 			i = i_l[n][0];
 			l = i_l[n][1];
 
-			gsl_spline_init(bessel_spline, bessel_xvec, &bessel[l + lmin - bessel_lmin][0], bessel_npts_x);
+			gsl_spline_init(bessel_spline, bessel_xvec, &bessel[l + lmin - bessel_lmin + 1][0], bessel_npts_x);
 
 			for(k=0; k<npts_k; k++){
 				bes = gsl_spline_eval(bessel_spline, xvec[i] * kvec[k], bessel_acc);
-				trans = transfer[l + lmin - transfer_lmin][k];
+				trans = transfer[l + lmin - transfer_lmin + 1][k];
 
 				y1[k] = cos(omega * kvec[k]) * trans * bes;
 				y2[k] = sin(omega * kvec[k]) * trans * bes;
@@ -285,12 +285,11 @@ void compute_error_bars(){
 	// P_sc(x,y,mu) = sum_l{((2l+1)/C_l) * sin_tilde(x,l) * cos_tilde(y,l) * P_l(mu)}
 	// P_cc(x,y,mu) = sum_l{((2l+1)/C_l) * cos_tilde(x,l) * cos_tilde(y,l) * P_l(mu)}
 
-	double pref0 = 1e0/(8e0*pi) * pow(6e0 * deltaphi * deltaphi, 2);
+	double pref = 1e0/(8e0*pi) * pow(6e0 * deltaphi * deltaphi, 2);
 
 	#pragma omp parallel
 	{
 		double cc, cs, sc, ss;
-		double pref, leg;
 		double dxdy, x2y2;
 		int i, j, n, l, mu;
 
@@ -318,14 +317,14 @@ void compute_error_bars(){
 		}
 	}
 
-	N_cos *= pref0;
-	N_sin *= pref0;
+	N_cos *= pref;
+	N_sin *= pref;
 	sigma_cos = sqrt(6e0/N_cos) * sqrt(1e0/fskyT);
 	sigma_sin = sqrt(6e0/N_sin) * sqrt(1e0/fskyT);
 
 }
 
-int multiple_omega(){
+void multiple_omega(){
 	/* Calculates error bars for multiple omegas */
 
 	// Initialise
@@ -405,7 +404,7 @@ void bispectrum_plot(){
 	write_1D_array(b_sin, npts_l, "sin_bispectrum_equal_l");
 }
 
-int const_model(){
+void const_model(){
 	// Computes the bispectrum for constant shape function S to compare with analytic solution
 
 	lmax = 200;
@@ -443,7 +442,7 @@ int const_model(){
 	#pragma omp parallel private(i)
 	{
 		int l1, l2, l3;
-		int ii, jj, kk, xx;
+		int ii, jj, kk;
 		double error;
 
 		#pragma omp for
@@ -478,7 +477,7 @@ int const_model(){
 }
 
 
-int error_bars(){
+void error_bars(){
 
 	clock_t start = clock();
 	
@@ -535,11 +534,9 @@ int error_bars(){
 	double time_spent = (double)(end - start) / CLOCKS_PER_SEC;
 	printf("Elapsed time: %fs\n", time_spent);
 	
-	return 0;
-	
 }
 
-int write_qtilde_integrand(){
+void write_qtilde_integrand(){
 
 	initialise();
 
@@ -584,11 +581,11 @@ int write_qtilde_integrand(){
 		for(l=0; l<npts_l_save; l++){
 			for(i=0; i<npts_x; i++){
 
-				gsl_spline_init(bessel_spline, bessel_xvec, &bessel[l + lmin - bessel_lmin][0], bessel_npts_x);
+				gsl_spline_init(bessel_spline, bessel_xvec, &bessel[l + lmin - bessel_lmin + 1][0], bessel_npts_x);
 
 				for(k=0; k<npts_k; k++){
 					bes = gsl_spline_eval(bessel_spline, xvec[i] * kvec[k], bessel_acc);
-					trans = transfer[l + lmin - transfer_lmin][k];
+					trans = transfer[l + lmin - transfer_lmin + 1][k];
 
 					y1[k] = cos(omega * kvec[k]) * trans * bes;
 					y2[k] = sin(omega * kvec[k]) * trans * bes;
@@ -618,7 +615,7 @@ int write_qtilde_integrand(){
 
 	// Write data
 	for(l=0; l<npts_l_save; l++){
-		char *name1, *name2;
+		char name1[200], name2[200];
 		sprintf(name1, "cos_tilde_integrand_l_%d", l+lmin);
 		sprintf(name2, "sin_tilde_integrand_l_%d", l+lmin);
 		write_2D_array(cos_integrand[l], npts_x, npts_k, name1);
@@ -627,7 +624,7 @@ int write_qtilde_integrand(){
 }
 
 
-int mpi_error_bars(int argc, char **argv){
+void mpi_error_bars(int argc, char **argv){
 
 	// MPI parameters
 	int rank, nprocs;
@@ -636,7 +633,7 @@ int mpi_error_bars(int argc, char **argv){
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
-	int i, j, mu, l; //loop indices
+	int i, mu, l; //loop indices
 
 	// Initialise parameters and load data
 	initialise();
@@ -751,13 +748,11 @@ int mpi_error_bars(int argc, char **argv){
 	free(i_j);	
 
 	MPI_Finalize();
-	
-	return 0;
 
 }
 
 
-int mpi_multiple_omega(int argc, char **argv){
+void mpi_multiple_omega(int argc, char **argv){
 	// Calculates error bars for multiple omegas using mpi
 
 	// MPI parameters
@@ -767,7 +762,7 @@ int mpi_multiple_omega(int argc, char **argv){
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
-	int i, j, mu, l; //loop indices
+	int i, mu, l; //loop indices
 
 	// Initialise
 	initialise();
@@ -848,11 +843,9 @@ int mpi_multiple_omega(int argc, char **argv){
 	}
 
 	MPI_Finalize();
-	
-	return 0;
 }
 
-int mpi_bispectrum(int argc, char **argv){
+void mpi_bispectrum(int argc, char **argv){
 
 	// MPI parameters
 	int rank, nprocs;
@@ -994,7 +987,6 @@ int mpi_bispectrum(int argc, char **argv){
 
 	MPI_Finalize();
 	
-	return 0;
 
 }
 

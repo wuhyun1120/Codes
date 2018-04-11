@@ -302,7 +302,7 @@ int feval_asy2(int n, double t, double* f, double* fp, int flag) {
 int feval_asy1(int n, double theta, double C, double* f, double* fp, int k)
 {    
     double sinT = sin(theta), cosT = cos(theta), cotT = cosT/sinT;
-    double alpha, cosA, sinA, denom, df, dfp, tmp;
+    double cosA, sinA, denom, df, dfp, tmp;
     int m;
     
     /* m = 0 */
@@ -345,7 +345,7 @@ int feval_asy1(int n, double theta, double C, double* f, double* fp, int k)
 int mycosA(int n, double theta, double* cosA, double* sinA, int k) {
         int j;
         double dh, tmp = 0.0, DH, dh2, lo, hi = theta, fixsgn = (double)(1-2*(k%2));
-        double k025 = (k-.25), rho = n+.5, sgn = 1.0, fact = 1.0, hi2;         
+        double k025 = (k-.25), rho = n+.5, sgn = 1.0, fact = 1.0;         
         
         /* bit shift to get a hi-lo version of theta */
         hi = (double)((float)hi);
