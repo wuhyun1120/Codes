@@ -7,6 +7,8 @@ double ***create_3D_array(int d1, int d2, int d3);
 
 void free_array(double *arr);
 void free_2D_array(double **arr);
+void free_int_array(int *arr);
+void free_2D_int_array(int **arr);
 
 int **vectorise_two_indices(int size1, int size2);
 int **vectorise_three_indices(int size1, int size2, int size3);

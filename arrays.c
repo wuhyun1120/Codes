@@ -66,6 +66,15 @@ void free_2D_array(double **arr){
 	free(arr);
 }
 
+void free_int_array(int * arr){
+	free(arr);
+}
+
+void free_2D_int_array(int **arr){
+	free(arr[0]);
+	free(arr);
+}
+
 int **vectorise_two_indices(int size1, int size2){
 	int **vec_ind = (int **) malloc(size1 * size2 * sizeof(int *));
 	vec_ind[0] = (int *) malloc(2 * size1 * size2 * sizeof(int));

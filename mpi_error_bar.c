@@ -64,7 +64,8 @@ int max(int x, int y){
 
 
 void make_xvec(){
-	// Makes a vector of x using steps and cuts defined below.
+	/* Makes a vector of x which is denser around the last scattering surface ~13900 */  
+	
 //	double step3 = 200.0;
 //	double step2 = 50.0;
 //	double step1 = 10.0;
@@ -135,20 +136,20 @@ void prepare_C(){
 	load_C();
 	load_BN();
 
-	// Note that Cls starts with l=0
-	C = create_2D_array(npts_pp, lmax);
+	C = create_2D_array(npts_pp, npts_l);
 
 	int pp, l;
-	double *beam, *noise;
+	double *raw_C, *beam, *noise;
 	for(pp=0; pp<npts_pp; pp++){
 
-		C[pp] = get_C(pp);
+		raw_C = get_C(pp);
 		beam = get_beam(pp);
 		noise = get_noise(pp);
 
 		// Incorporate the beam and noise
-		for(l=0; l<lmax; l++){
-			C[pp][l] += noise[l] / (beam[l] * beam[l]); 
+		for(l=0; l<npts_l; l++){
+			// Notes raw_C, beam and noise data all start with l=0
+			C[pp][l] = raw_C[l+lmin] + noise[l+lmin] / (beam[l+lmin] * beam[l+lmin]); 
 		}
 	}
 
@@ -157,23 +158,6 @@ void prepare_C(){
 	free_BN();
 
 }
-
-void print_result(){
-	/* Prints parameters and computed error bars*/
-	printf("Computing error bars for sinusodial shape functions\n");
-	printf("*** Parameters ***\n");
-	printf("omega = %e\n", omega);
-	printf("lmin = %d, lmax = %d\n", lmin, lmax);
-	printf("xmax = %e, npts_x = %d\n", xmax, npts_x);
-	printf("kmax = %e, npts_k = %d\n", kmax, npts_k);
-	printf("npts_mu = %d\n", npts_mu);
-	printf("Amplitude factor deltaphi = %e\n", deltaphi);
-	printf("Used %s, %s, %s\n", bessel_data_filename, transfer_T_data_filename, transfer_E_data_filename);
-	printf("\n");
-	printf("Results: N_cos = %e, N_sin = %e\n", N_cos, N_sin);
-	printf("Results: sigma_cos = %e, sigma_sin = %e\n\n", sigma_cos, sigma_sin);
-}
-
 
 void initialise(){
 
@@ -184,7 +168,6 @@ void initialise(){
 	printf("loaded\n");
 	// Initialise some parameters and the x, k vectors
 	npts_l = lmax - lmin + 1;
-	npts_mu = 3*lmax/2 + 1;
 
 	kvec = transfer_kvec;
 	npts_k = transfer_npts_k;
@@ -238,7 +221,6 @@ void initialise(){
 
 }
 
-
 void precompute_tilde(){
 	/* Evaluate sin_tilde(x,l) and cos_tilde(x,l) */
 
@@ -258,14 +240,14 @@ void precompute_tilde(){
 
 	double pref = 2e0/pi;
 
-	#pragma omp parallel private(i,l)
+	#pragma omp parallel private(i,l,p)
 	{
 		// Initialise GSL tools for interpolation and integration
 		gsl_spline *bessel_spline = gsl_spline_alloc(gsl_interp_linear, bessel_npts_x);
 		gsl_interp_accel *bessel_acc = gsl_interp_accel_alloc();
 		double bes;	// temporary variables
 		double **trans = (double **) malloc(npts_p * sizeof(double *));
-		int n, k, p;
+		int n, k;
 
 		#pragma omp for
 		for(n=start_i_l; n<end_i_l; n++){
@@ -304,6 +286,7 @@ void precompute_tilde(){
 	}
 }
 
+
 void orthogonalise_tilde(){
 	/* Orthogonalises the computed cos_tilde, sin_tilde so that C = I */
 
@@ -312,7 +295,7 @@ void orthogonalise_tilde(){
 	// Precompute 1/sqrt(C_TT) for computational efficiency
 	double *vec = create_array(npts_l);
 	for(l=0; l<npts_l; l++){
-		vec[l] = 1e0 / sqrt(C[TT][l+lmin]);
+		vec[l] = 1e0 / sqrt(C[TT][l]);
 	}
 
 	#pragma omp parallel for private(x,l)
@@ -326,14 +309,14 @@ void orthogonalise_tilde(){
 	if(do_polarisation == 1){
 		// Again precompute the denominator
 		for(l=0; l<npts_l; l++){
-			vec[l] *= 1e0 / sqrt(C[TT][l+lmin] * C[EE][l+lmin] - C[TE][l+lmin] * C[TE][l+lmin]);
+			vec[l] *= 1e0 / sqrt(C[TT][l] * C[EE][l] - C[TE][l] * C[TE][l]);
 		}
 
 		#pragma omp parallel for private(x,l)
 		for(x=0; x<npts_x; x++){
 			for(l=0; l<npts_l; l++){
-				cos_tilde[E][x][l] = vec[l] * (C[TT][l+lmin] * cos_tilde[E][x][l] - C[TE][l+lmin] * cos_tilde[T][x][l]);
-				sin_tilde[E][x][l] = vec[l] * (C[TT][l+lmin] * sin_tilde[E][x][l] - C[TE][l+lmin] * sin_tilde[T][x][l]);
+				cos_tilde[E][x][l] = vec[l] * (C[TT][l] * cos_tilde[E][x][l] - C[TE][l] * cos_tilde[T][x][l]);
+				sin_tilde[E][x][l] = vec[l] * (C[TT][l] * sin_tilde[E][x][l] - C[TE][l] * sin_tilde[T][x][l]);
 			}
 		}
 	}
@@ -341,6 +324,30 @@ void orthogonalise_tilde(){
 	free_array(vec);
 
 }
+
+
+void prepare_mu_integration(){
+	/* Prepares Gauss-Legendre integration and precomputes the Legendre function values needed*/
+
+	// Gauss-Legendre quadrature is precise for polynomials of degree up to 2n-1.
+	// Since we have three Pl's on our integrand, we require (3*lmax+1)/2 points
+	npts_mu = 3*lmax/2 + 1;
+	gl_nodes = create_array(npts_mu);
+	gl_weights = create_array(npts_mu);
+	asy(gl_nodes, gl_weights, npts_mu); // Implemented in gl_integration.c
+
+	// Values of Legendre polynomials at the nodes are computed and stored 
+	legendre = create_2D_array(npts_mu, npts_l);
+	int mu, l;
+	#pragma omp parallel for private(mu,l)
+	for(mu=0; mu<npts_mu; mu++){
+		for(l=0; l<npts_l; l++){
+			// A factor of 2l+1 was included here for later convenience
+			legendre[mu][l] = (2*(l+lmin)+1) * gsl_sf_legendre_Pl(l+lmin, gl_nodes[mu]);
+		}
+	}
+}
+
 
 void compute_error_bars(){
 	/* Compute P_ss, P_sc, P_cs, P_cc and use them to compute N and hence sigma */
@@ -355,14 +362,17 @@ void compute_error_bars(){
 	// P_cs(x,y,mu) = sum_l{((2l+1)/C_l) * cos_tilde(x,l) * sin_tilde(y,l) * P_l(mu)}
 	// P_sc(x,y,mu) = sum_l{((2l+1)/C_l) * sin_tilde(x,l) * cos_tilde(y,l) * P_l(mu)}
 	// P_cc(x,y,mu) = sum_l{((2l+1)/C_l) * cos_tilde(x,l) * cos_tilde(y,l) * P_l(mu)}
+	// With polarisation data, use P_ss = P_ss[T] + P_ss[E] etc.
 
-	double pref = 1e0/(8e0*pi) * pow(6e0 * deltaphi * deltaphi, 2);
+	N_cos = N_sin = 0;
+	// We have additional factor of 6 * (delta_phi)^2 from the definition of shape function for the feature model
+	double pref = (1e0/(8e0*pi)) * pow(6e0 * deltaphi * deltaphi, 2);
 
 	#pragma omp parallel
 	{
 		double cc, cs, sc, ss;
 		double dxdy, x2y2;
-		int i, j, n, l, mu;
+		int i, j, n, l, mu, p;
 
 		#pragma omp for reduction(+:N_cos,N_sin)
 		for(n=start_i_j; n<end_i_j; n++){
@@ -373,26 +383,110 @@ void compute_error_bars(){
 			x2y2 = (xvec[i]*xvec[i]) * (xvec[j]*xvec[j]);
 			
 			for(mu=0; mu<npts_mu; mu++){
-				// Sum over l first
+				// Sum over l and polarisation first
 				cc = cs = sc = ss = 0;
-				for(l=0; l<npts_l; l++){
-					cc += C_inv[l] * cos_tilde[T][i][l] * cos_tilde[T][j][l] * legendre[mu][l];
-					cs += C_inv[l] * cos_tilde[T][i][l] * sin_tilde[T][j][l] * legendre[mu][l];
-					sc += C_inv[l] * sin_tilde[T][i][l] * cos_tilde[T][j][l] * legendre[mu][l];
-					ss += C_inv[l] * sin_tilde[T][i][l] * sin_tilde[T][j][l] * legendre[mu][l];
-				}	
+				for(p=0; p<npts_p; p++){
+					for(l=0; l<npts_l; l++){
+						cc += cos_tilde[p][i][l] * cos_tilde[p][j][l] * legendre[mu][l];
+						cs += cos_tilde[p][i][l] * sin_tilde[p][j][l] * legendre[mu][l];
+						sc += sin_tilde[p][i][l] * cos_tilde[p][j][l] * legendre[mu][l];
+						ss += sin_tilde[p][i][l] * sin_tilde[p][j][l] * legendre[mu][l];
+					}	
+				}
 
-				N_cos += gl_weights[mu] * dxdy * x2y2 * ((cc * cc * cc) + 3*(cc * ss * ss) - 3*(sc * sc * cc) - 3*(cs * cs * cc) + 6*(sc * cs * ss));
-				N_sin += gl_weights[mu] * dxdy * x2y2 * ((ss * ss * ss) + 3*(ss * cc * cc) - 3*(cs * cs * ss) - 3*(sc * sc * ss) + 6*(cs * sc * cc));
+				N_cos += gl_weights[mu] * x2y2 * dxdy * ((cc * cc * cc) + 3*(cc * ss * ss) - 3*(sc * sc * cc) - 3*(cs * cs * cc) + 6*(sc * cs * ss));
+				N_sin += gl_weights[mu] * x2y2 * dxdy * ((ss * ss * ss) + 3*(ss * cc * cc) - 3*(cs * cs * ss) - 3*(sc * sc * ss) + 6*(cs * sc * cc));
 			}
 		}
 	}
 
 	N_cos *= pref;
 	N_sin *= pref;
-	sigma_cos = sqrt(6e0/N_cos) * sqrt(1e0/fskyT);
-	sigma_sin = sqrt(6e0/N_sin) * sqrt(1e0/fskyT);
+	sigma_cos = sqrt(6e0/N_cos);
+	sigma_sin = sqrt(6e0/N_sin);
 
+	// Adjust according to the sky coverage
+	if(do_polarisation == 0){
+		sigma_cos *= 1e0/sqrt(fskyT);
+		sigma_sin *= 1e0/sqrt(fskyT);
+	}else if(do_polarisation == 1){
+		sigma_cos *= 1e0/sqrt(fskyE);
+		sigma_sin *= 1e0/sqrt(fskyE);
+	}
+}
+
+
+void print_result(){
+	/* Prints parameters and computed error bars*/
+	printf("Computing error bars for sinusodial shape functions\n");
+	printf("*** Parameters ***\n");
+	printf("omega = %e\n", omega);
+	printf("lmin = %d, lmax = %d\n", lmin, lmax);
+	printf("xmax = %e, npts_x = %d\n", xmax, npts_x);
+	printf("kmax = %e, npts_k = %d\n", kmax, npts_k);
+	printf("npts_mu = %d\n", npts_mu);
+	printf("Amplitude factor deltaphi = %e\n", deltaphi);
+	printf("Used %s, %s, %s\n", bessel_data_filename, transfer_T_data_filename, transfer_E_data_filename);
+	printf("\n");
+	printf("Results: N_cos = %e, N_sin = %e\n", N_cos, N_sin);
+	printf("Results: sigma_cos = %e, sigma_sin = %e\n\n", sigma_cos, sigma_sin);
+}
+
+
+void free_tilde(){
+	/* Free up the memory of cos, sin tildes */	
+	int p;
+	for(p=0; p<npts_p; p++){
+		free_2D_array(cos_tilde[p]);
+		free_2D_array(sin_tilde[p]);
+	}
+}
+
+
+/***** All the ingredients for computing error bars are now ready. Different computational routines to follow. *****/
+
+
+void error_bars(){
+	/* Pure openMP routine to compute error bars for a single value of omega */
+
+	clock_t start = clock();
+	
+	// Initialise and load data
+	initialise();
+	
+	// Perform the k integral to compute sin_tilde(x) and cos_tilde(x)
+	precompute_tilde();
+	printf("Finished computing sin_tilde, cos_tilde. Elapsed time: %fs\n", (double)(clock() - start) / CLOCKS_PER_SEC);
+
+	// We no longer need bessel and transfer data
+	free_bessel();
+	free_transfer();
+
+	// Now modify sin, cos tilde basis so that the covariance matrix is orthonormal
+	orthogonalise_tilde(); 
+
+	// Compute the Gauss-Legendre coefficients and store Legendre polynomial values 
+	prepare_mu_integration();	
+
+	// Now the main computation	
+	compute_error_bars();
+	
+	// Print out the answer together with parameters used
+	print_result();
+
+	// Clean up
+	free_tilde();
+	free_2D_array(C);
+	free_2D_array(legendre);
+	free_array(gl_nodes);
+	free_array(gl_weights);
+	free_2D_int_array(i_j);
+	free_2D_int_array(i_l);
+	
+	clock_t end = clock();
+	double time_spent = (double)(end - start) / CLOCKS_PER_SEC;
+	printf("Elapsed time: %fs\n", time_spent);
+	
 }
 
 void multiple_omega(){
@@ -413,13 +507,6 @@ void multiple_omega(){
 	// Values of Legendre polynomials at the nodes are computed and stored 
 	legendre = create_2D_array(npts_mu, npts_l);
 
-	int mu, l;
-	#pragma omp parallel for private(mu,l)
-	for(mu=0; mu<npts_mu; mu++){
-		for(l=0; l<npts_l; l++){
-			legendre[mu][l] = gsl_sf_legendre_Pl(lmin + l, gl_nodes[mu]);
-		}
-	}
 
 
 	int o, npts_omega = 10;
@@ -550,63 +637,6 @@ void const_model(){
 }
 
 
-void error_bars(){
-
-	clock_t start = clock();
-	
-	// Initialise and load data
-	initialise();
-	
-	// Precompute sin_tilde(x) and cos_tilde(x)
-	precompute_tilde();
-	
-	free_bessel();
-	free_transfer();
-
-	// Incorporate BN effects to the power spectrum and compute (2l+1)/Cl
-	precompute_C_inv();
-	printf("Finished computing sin_tilde, cos_tilde. Elapsed time: %fs\n", (double)(clock() - start) / CLOCKS_PER_SEC);
-	
-	free_C();
-	free_BN();
-	
-	// Use the Gauss-Legendre method for integrating mu
-	gl_nodes = create_array(npts_mu);
-	gl_weights = create_array(npts_mu);
-	asy(gl_nodes, gl_weights, npts_mu); // Implemented in gl_integration.c
-	
-	// Values of Legendre polynomials at the nodes are computed and stored 
-	legendre = create_2D_array(npts_mu, npts_l);
-
-	int mu, l;
-	#pragma omp parallel for private(mu,l)
-	for(mu=0; mu<npts_mu; mu++){
-		for(l=0; l<npts_l; l++){
-			legendre[mu][l] = gsl_sf_legendre_Pl(lmin + l, gl_nodes[mu]);
-		}
-	}
-	
-	
-	// Main computation
-	compute_error_bars();
-	
-	free_2D_array(cos_tilde[T]);
-	free_2D_array(sin_tilde[T]);
-	free_array(C_inv);
-	free_2D_array(legendre);
-	free_array(gl_nodes);
-	free_array(gl_weights);
-	free(i_j[0]);
-	free(i_j);	
-
-	// Print out the answer
-	print_result();
-	
-	clock_t end = clock();
-	double time_spent = (double)(end - start) / CLOCKS_PER_SEC;
-	printf("Elapsed time: %fs\n", time_spent);
-	
-}
 
 void write_qtilde_integrand(){
 
