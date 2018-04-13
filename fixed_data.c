@@ -13,16 +13,16 @@
 #define EE 2
 #endif
 
-double pi = M_PI;
+const double pi = M_PI;
 
-double deltaphi = 1.5714e-8;
-double fskyT = 0.76;
-double fskyE = 0.74;
+const double deltaphi = 1.5714e-8;
+const double fskyT = 0.76;
+const double fskyE = 0.74;
 
 const int do_polarisation = 0;
 
 //char *data_dir = "/fast/space/projects/dp002/jf334/data/";
-char *data_dir = "./data/";
+char *data_dir = "/home/wuhyun/Treasure/data/";
 
 char *bessel_data_filename = "bessel_4000";
 char *bessel_size_filename = "bessel_4000_size";
@@ -206,13 +206,8 @@ void load_C(){
 	while (fgets(line, 200, angular_power_spectrum_file)){
 
 		l = (int) strtod(line, cptr);
-		if (i == 0){
-			cl_lmin = l;
-			if(cl_lmin != 0){
-				printf("Cls data file starts with l = %d instead of 0, which is assumed. Try again, you can do it! \n", cl_lmin);
-				exit(1);
-			}
-		}
+		if (i == 0) cl_lmin = l;
+
 		C_TT[i] = strtod(*cptr, cptr);
 		C_TT[i] = 2e0 * pi * C_TT[i] / (l * (l + 1e0));
 
@@ -226,16 +221,19 @@ void load_C(){
 		i++;
 	}
 
-	
-
 	cl_lmax = l;
 	cl_npts_l = i;
+	if(cl_npts_l > size){
+		printf("Angular power spectrum file has %d points in l, larger than the expected number of %d. Try again, you can do it!\n", cl_npts_l, size);
+		exit(1);
+	}
+
 	fclose(angular_power_spectrum_file);
 	free(cptr);
 
 //	printf("Angular power spectrum data file has %d points in l\n", cl_npts_l);
 	//printf("lmin = %d, lmax = %d\n", cl_lmin, cl_lmax);
-	//for (i=0; i<100; i++) printf("%e ", C[i]);
+	//for (i=0; i<100; i++) printf("%e ", C_TT[i]);
 	//printf("\n");
 
 }
@@ -263,7 +261,7 @@ void load_BN(){
 	while (fgets(line, 200, BN_TT_file)){
 		
 		l = (int) strtod(line, cptr);
-		if (l == 0) BN_lmin = l;
+		if (i == 0) BN_lmin = l;
 		beam_TT[i] = strtod(*cptr, cptr);
 		noise_TT[i] = strtod(*cptr, cptr);
 		i++;
@@ -271,6 +269,11 @@ void load_BN(){
 
 	BN_lmax = l;
 	BN_npts_l = i;
+	if(BN_npts_l > size){
+		printf("Beam and noise file has %d points in l, larger than the expected number of %d. Try again, you can do it!\n", BN_npts_l, size);
+		exit(1);
+	}
+
 	fclose(BN_TT_file);
 
 	if(do_polarisation == 1){
@@ -291,6 +294,10 @@ void load_BN(){
 
 		i = 0;
 		while (fgets(line, 200, BN_EE_file)){
+			l = (int) strtod(line, cptr);
+			if (i == 0 && l != BN_lmin){
+				printf("Warning: BN data files for T and E have different lmin.\n");
+			}
 			beam_EE[i] = strtod(*cptr, cptr);
 			noise_EE[i] = strtod(*cptr, cptr);
 			i++;
@@ -304,7 +311,6 @@ void load_BN(){
 	}
 	
 	free(cptr);
-
 }
 
 double *get_bessel(int l){
@@ -324,38 +330,53 @@ double *get_transfer(int pol, int l){
 
 double *get_C(int pol){
 	/* pol = TT, TE or EE */
-	double *cp = create_array(cl_npts_l);
+	double *cp = create_array(cl_lmax+1);
 	int l;
+	for(l=0; l<cl_lmin; l++) cp[l] = 0.0;
+
 	if(pol == TT){
-		for(l=0; l<cl_npts_l; l++) cp[l] = C_TT[l];	
+		for(l=cl_lmin; l<=cl_lmax; l++) cp[l] = C_TT[l-cl_lmin];	
 	}else if(pol == TE){
-		for(l=0; l<cl_npts_l; l++) cp[l] = C_TE[l];	
+		for(l=cl_lmin; l<=cl_lmax; l++) cp[l] = C_TE[l-cl_lmin];	
 	}else if(pol == EE){
-		for(l=0; l<cl_npts_l; l++) cp[l] = C_EE[l];
+		for(l=cl_lmin; l<=cl_lmax; l++) cp[l] = C_EE[l-cl_lmin];
 	}
+
 	return cp;
 }
 
 double *get_beam(int pol){
 	/* pol = TT, TE or EE */
+	double *cp = create_array(BN_lmax+1);
+	int l;
+	for(l=0; l<BN_lmin; l++) cp[l] = 0.0;
+
 	if(pol == TT){
-		return beam_TT;
+		for(l=BN_lmin; l<=BN_lmax; l++) cp[l] = beam_TT[l-BN_lmin];
 	}else if(pol == TE){
-		return beam_TE;
+		for(l=BN_lmin; l<=BN_lmax; l++) cp[l] = beam_TE[l-BN_lmin];
 	}else{
-		return beam_EE;
+		for(l=BN_lmin; l<=BN_lmax; l++) cp[l] = beam_EE[l-BN_lmin];
 	}
+
+	return cp;
 }
 
 double *get_noise(int pol){
 	/* pol = TT, TE or EE */
+	double *cp = create_array(BN_lmax+1);
+	int l;
+	for(l=0; l<BN_lmin; l++) cp[l] = 0.0;
+
 	if(pol == TT){
-		return noise_TT;
+		for(l=BN_lmin; l<=BN_lmax; l++) cp[l] = noise_TT[l-BN_lmin];
 	}else if(pol == TE){
-		return noise_TE;
+		for(l=BN_lmin; l<=BN_lmax; l++) cp[l] = noise_TE[l-BN_lmin];
 	}else{
-		return noise_EE;
+		for(l=BN_lmin; l<=BN_lmax; l++) cp[l] = noise_EE[l-BN_lmin];
 	}
+
+	return cp;
 }
 
 void free_bessel(){

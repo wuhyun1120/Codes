@@ -11,21 +11,21 @@
 #define EE 2
 #endif
 
-extern double pi;
+extern const double pi;
 
-extern double deltaphi;
-extern double fskyT;
-extern double fskyE;
+extern const double deltaphi;
+extern const double fskyT;
+extern const double fskyE;
 
 extern const int do_polarisation;
 
 extern char data_dir[MAXLEN];
 
-extern char bessel_data_filename[MAXLEN];
-extern char bessel_size_filename[MAXLEN];
-extern char transfer_T_data_filename[MAXLEN];
-extern char transfer_E_data_filename[MAXLEN];
-extern char transfer_size_filename[MAXLEN];
+extern char *bessel_data_filename;
+extern char *bessel_size_filename;
+extern char *transfer_T_data_filename;
+extern char *transfer_E_data_filename;
+extern char *transfer_size_filename;
 
 
 extern int bessel_npts_l, bessel_npts_x;
