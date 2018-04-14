@@ -19,7 +19,7 @@ const double deltaphi = 1.5714e-8;
 const double fskyT = 0.76;
 const double fskyE = 0.74;
 
-const int do_polarisation = 0;
+const int do_polarisation = 1;
 
 //char *data_dir = "/fast/space/projects/dp002/jf334/data/";
 char *data_dir = "/home/wuhyun/Treasure/data/";
@@ -45,7 +45,7 @@ double *transfer_kvec;
 static double **transfer_T, **transfer_E;
 
 int cl_lmin, cl_lmax, cl_npts_l;
-static double *C_TT, *C_TE, *C_EE;
+static double *C_TT, *C_TE, *C_EE, *C_BB;
 
 int BN_lmin, BN_lmax, BN_npts_l;
 static double *beam_TT, *beam_TE, *beam_EE;
@@ -192,6 +192,7 @@ void load_C(){
 	if(do_polarisation == 1){
 		C_TE = create_array(size);
 		C_EE = create_array(size);
+		C_BB = create_array(size);
 	}
 
 	strcat(strcpy(angular_power_spectrum_filename, data_dir), C_data_filename);
@@ -212,10 +213,13 @@ void load_C(){
 		C_TT[i] = 2e0 * pi * C_TT[i] / (l * (l + 1e0));
 
 		if(do_polarisation == 1){
-			C_TE[i] = strtod(*cptr, cptr);
+			// Columns in the data files are of order TT EE BB TE
 			C_EE[i] = strtod(*cptr, cptr);
-			C_TE[i] = 2e0 * pi * C_TE[i] / (l * (l + 1e0));
+			C_BB[i] = strtod(*cptr, cptr);
+			C_TE[i] = strtod(*cptr, cptr);
 			C_EE[i] = 2e0 * pi * C_EE[i] / (l * (l + 1e0));
+			C_BB[i] = 2e0 * pi * C_BB[i] / (l * (l + 1e0));
+			C_TE[i] = 2e0 * pi * C_TE[i] / (l * (l + 1e0));
 		}
 	
 		i++;
@@ -340,6 +344,8 @@ double *get_C(int pol){
 		for(l=cl_lmin; l<=cl_lmax; l++) cp[l] = C_TE[l-cl_lmin];	
 	}else if(pol == EE){
 		for(l=cl_lmin; l<=cl_lmax; l++) cp[l] = C_EE[l-cl_lmin];
+	}else{
+		for(l=cl_lmin; l<=cl_lmax; l++) cp[l] = C_BB[l-cl_lmin];
 	}
 
 	return cp;
@@ -394,6 +400,7 @@ void free_C(){
 	free(C_TT);
 	if(do_polarisation == 1){
 		free(C_TE);
+		free(C_BB);
 		free(C_EE);
 	}
 }

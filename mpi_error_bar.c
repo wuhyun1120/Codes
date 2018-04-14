@@ -300,7 +300,7 @@ void orthogonalise_tilde(){
 	// Precompute 1/sqrt(C_TT) for computational efficiency
 	double *vec = create_array(npts_l);
 	for(l=0; l<npts_l; l++){
-		vec[l] = 1e0 / sqrt(C[TT][l]);
+		vec[l] = sqrt(1e0 / C[TT][l]);
 	}
 
 	#pragma omp parallel for private(x,l)
@@ -314,14 +314,18 @@ void orthogonalise_tilde(){
 	if(do_polarisation == 1){
 		// Again precompute the denominator
 		for(l=0; l<npts_l; l++){
-			vec[l] *= 1e0 / sqrt(C[TT][l] * C[EE][l] - C[TE][l] * C[TE][l]);
+			printf("For l=%d: %e\n", l+lmin, vec[l]);
+			vec[l] *= sqrt(1e0 / (C[TT][l] * C[EE][l] - C[TE][l] * C[TE][l]));
 		}
 
 		#pragma omp parallel for private(x,l)
 		for(x=0; x<npts_x; x++){
 			for(l=0; l<npts_l; l++){
-				cos_tilde[E][x][l] = vec[l] * (C[TT][l] * cos_tilde[E][x][l] - C[TE][l] * cos_tilde[T][x][l]);
-				sin_tilde[E][x][l] = vec[l] * (C[TT][l] * sin_tilde[E][x][l] - C[TE][l] * sin_tilde[T][x][l]);
+				cos_tilde[E][x][l] = vec[l] * (C[TT][l] * cos_tilde[E][x][l] - C[TE][l] * sqrt(C[TT][l]) * cos_tilde[T][x][l]);
+				sin_tilde[E][x][l] = vec[l] * (C[TT][l] * sin_tilde[E][x][l] - C[TE][l] * sqrt(C[TT][l]) * sin_tilde[T][x][l]);
+				if(x==50){
+					printf("%e, %e, %e\n", vec[l], vec[l]*C[TT][l], vec[l]*C[TE][l]);
+				}
 			}
 		}
 	}
