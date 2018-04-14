@@ -19,7 +19,7 @@ const double deltaphi = 1.5714e-8;
 const double fskyT = 0.76;
 const double fskyE = 0.74;
 
-const int do_polarisation = 1;
+const int do_polarisation = 0;
 
 //char *data_dir = "/fast/space/projects/dp002/jf334/data/";
 char *data_dir = "/home/wuhyun/Treasure/data/";

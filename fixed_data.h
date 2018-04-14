@@ -26,6 +26,9 @@ extern char *bessel_size_filename;
 extern char *transfer_T_data_filename;
 extern char *transfer_E_data_filename;
 extern char *transfer_size_filename;
+extern char *C_data_filename;
+extern char *BN_TT_data_filename;
+extern char *BN_EE_data_filename;
 
 
 extern int bessel_npts_l, bessel_npts_x;

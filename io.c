@@ -2,7 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-char *output_dir = "./plot_data/";
+char *output_dir = "/home/wuhyun/Treasure/plot_data/";
+//char *output_dir = "./plot_data/";
 
 void write_1D_array(double *data, int size, char *output_filename){
 
