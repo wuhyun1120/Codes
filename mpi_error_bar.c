@@ -57,6 +57,8 @@ static int end_i_j;
 static double N_cos, N_sin;
 static double sigma_cos, sigma_sin;
 
+static double N_cross;
+static double sigma_cross;
 
 int min(int x, int y){
 	 return (x < y) ? x : y;
@@ -69,12 +71,12 @@ int max(int x, int y){
 void make_xvec(){
 	///* Makes a vector of x which is denser around the last scattering surface ~13900 */  
 	
-	double step3 = 200.0;
-	double step2 = 50.0;
-	double step1 = 10.0;
-//	double step3 = 60.0;
-//	double step2 = 30.0;
-//	double step1 = 15.0;
+//	double step3 = 200.0;
+//	double step2 = 50.0;
+//	double step1 = 10.0;
+	double step3 = 60.0;
+	double step2 = 30.0;
+	double step1 = 15.0;
 //	double step3 = 30.0;
 //	double step2 = 15.0;
 //	double step1 = 10.0;
@@ -299,7 +301,7 @@ void precompute_tilde(){
 
 void orthogonalise_tilde(){
 	/* Orthogonalises the computed cos_tilde, sin_tilde so that C = I */
-	// Linear transformation on polarisation indices (T,E):
+	// Linear transformation 'L' on polarisation indices (T,E):
 	// cos_tilde[T] -> (1 / sqrt(C[TT})) * cos_tilde[T],
 	// cos_tilde[E] -> (C[TT] * cos_tilde[E] - C[TE] * cos_tilde[T]) / sqrt(C[TT] * (C[TT] * C[EE] - C[TE] * C[TE])
 
@@ -382,6 +384,8 @@ void compute_error_bars(){
 	// N = (1/8pi) * integral{x^2*dx * y^2*dy * dmu * [3*P_ss*P_cc*P_cc + 6*P_sc*P_cs*P_cc + 1*P_ss*P_ss*P_ss - 3*P_sc*P_sc*P_ss - 3*P_cs*P_cs*P_ss]}
 	// For S = cos,
 	// N = (1/8pi) * integral{x^2*dx * y^2*dy * dmu * [3*P_cc*P_ss*P_ss + 6*P_cs*P_sc*P_ss + 1*P_cc*P_cc*P_cc - 3*P_cs*P_cs*P_cc - 3*P_sc*P_sc*P_cc]}
+	// and finally for the cross term between sin and cos,
+	// N = (1/8pi) * integral{x^2*dx * y^2*dy * dmu * [3*P_cs*P_cc*P_cc - P_cs*P_cs*P_cs - 3*P_cs*P_sc*P_sc - 6*P_cc*P_ss*P_sc + 3*P_cs*P_ss*P_ss]}
 	// where
 	// P_ss(x,y,mu) = sum_l{((2l+1)/C_l) * sin_tilde(x,l) * sin_tilde(y,l) * P_l(mu)}
 	// P_cs(x,y,mu) = sum_l{((2l+1)/C_l) * cos_tilde(x,l) * sin_tilde(y,l) * P_l(mu)}
@@ -389,23 +393,25 @@ void compute_error_bars(){
 	// P_cc(x,y,mu) = sum_l{((2l+1)/C_l) * cos_tilde(x,l) * cos_tilde(y,l) * P_l(mu)}
 	// With polarisation data, use P_ss = P_ss[T] + P_ss[E] etc.
 
-	N_cos = N_sin = 0;
-	// We have additional factor of 6 * (delta_phi)^2 from the definition of shape function for the feature model
-	double pref = (1e0/(8e0*pi)) * pow(6e0 * deltaphi * deltaphi, 2);
+	N_cos = N_sin = N_cross = 0;
+
+	// Factor of 1/(8*pi) from the integral
+	// Factor of 6*(delta_phi)^2 from the definition of shape function for the feature model
+	// ... and a factor of fsky from the sky coverage. 
+	double pref = (1e0/(8e0*pi)) * pow(6e0 * deltaphi * deltaphi, 2) * fsky;
 
 	#pragma omp parallel
 	{
 		double cc, cs, sc, ss;
-		double dxdy, x2y2;
+		double xyint;
 		int i, j, n, l, mu, p;
 
-		#pragma omp for reduction(+:N_cos,N_sin)
+		#pragma omp for reduction(+:N_cos,N_sin,N_cross)
 		for(n=start_i_j; n<end_i_j; n++){
 			i = i_j[n][0];
 			j = i_j[n][1];
 
-			dxdy = step_x[i] * step_x[j];
-			x2y2 = (xvec[i]*xvec[i]) * (xvec[j]*xvec[j]);
+			xyint = step_x[i] * step_x[j] * (xvec[i]*xvec[i]) * (xvec[j]*xvec[j]);
 			
 			for(mu=0; mu<npts_mu; mu++){
 				// Sum over l and polarisation first
@@ -419,18 +425,27 @@ void compute_error_bars(){
 					}	
 				}
 
-				N_cos += gl_weights[mu] * x2y2 * dxdy * ((cc * cc * cc) + 3*(cc * ss * ss) - 3*(sc * sc * cc) - 3*(cs * cs * cc) + 6*(sc * cs * ss));
-				N_sin += gl_weights[mu] * x2y2 * dxdy * ((ss * ss * ss) + 3*(ss * cc * cc) - 3*(cs * cs * ss) - 3*(sc * sc * ss) + 6*(cs * sc * cc));
+				N_cos += gl_weights[mu] * xyint * ((cc * cc * cc) + 3*(cc * ss * ss) - 3*(sc * sc * cc) - 3*(cs * cs * cc) + 6*(sc * cs * ss));
+				N_sin += gl_weights[mu] * xyint * ((ss * ss * ss) + 3*(ss * cc * cc) - 3*(cs * cs * ss) - 3*(sc * sc * ss) + 6*(cs * sc * cc));
+				N_cross += gl_weights[mu] * xyint * (3*(cs * cc * cc) - (cs * cs * cs) - 3*(cs * sc * sc) - 6*(cc * ss * sc) + 3*(cs * ss * ss));
 			}
 		}
 	}
 
 	N_cos *= pref;
 	N_sin *= pref;
+	N_cross *= pref;
 
-	// Adjust according to the sky coverage
-	sigma_cos = sqrt(6e0/N_cos) * sqrt(1e0/fsky);
-	sigma_sin = sqrt(6e0/N_sin) * sqrt(1e0/fsky);
+	sigma_cos = sqrt(6e0/N_cos);
+	sigma_sin = sqrt(6e0/N_sin);
+}
+
+double error_bar_with_phase(double phi){
+	/* Returns the error bar for S = sin(omega*k + phi) */
+
+	double c = cos(phi), s = sin(phi);
+	double N = (s*s) * N_cos + (c*c) * N_sin + (2*c*s) * N_cross;
+	return sqrt(6e0/N);
 }
 
 
@@ -447,7 +462,7 @@ void print_results(){
 	printf("Used %s, %s, %s, %s\n", bessel_data_filename, transfer_T_data_filename, C_data_filename, BN_TT_data_filename );
 	printf("Polarisation %s\n", (do_polarisation ? "ON" : "OFF"));
 	printf("\n* Results *\n");
-	printf("N_cos = %e, N_sin = %e\n", N_cos, N_sin);
+	printf("N_cos = %e, N_sin = %e, N_cross = %e\n", N_cos, N_sin, N_cross);
 	printf("sigma_cos = %e, sigma_sin = %e\n\n", sigma_cos, sigma_sin);
 }
 
@@ -559,6 +574,7 @@ void multiple_omega(){
 
 
 void mpi_error_bars(int argc, char **argv){
+	/* MPI + openMP routine to compute error bars for a single value of omega */
 
 	// MPI parameters
 	int rank, nprocs;
@@ -626,17 +642,19 @@ void mpi_error_bars(int argc, char **argv){
 	MPI_Barrier(MPI_COMM_WORLD);
 
 	// Incorporate the results in the root process
-	double final_N_cos, final_N_sin;
+	double final_N_cos, final_N_sin, final_N_cross;
 
 	MPI_Reduce(&N_cos, &final_N_cos, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 	MPI_Reduce(&N_sin, &final_N_sin, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+	MPI_Reduce(&N_cross, &final_N_cross, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
 	if (rank == 0){
 
 		N_cos = final_N_cos;
 		N_sin = final_N_sin;
-		sigma_cos = sqrt(6e0/N_cos) * sqrt(1e0/fsky);
-		sigma_sin = sqrt(6e0/N_sin) * sqrt(1e0/fsky);
+		N_cross = final_N_cross;
+		sigma_cos = sqrt(6e0/N_cos);
+		sigma_sin = sqrt(6e0/N_sin);
 
 		// Print out the answer together with parameters used
 		print_results();
@@ -659,7 +677,9 @@ void mpi_error_bars(int argc, char **argv){
 	MPI_Finalize();
 }
 
+
 void mpi_multiple_omega(int argc, char **argv){
+	/* MPI + openMP routine to compute error bars for multiple values of omega */
 
 	// MPI parameters
 	int rank, nprocs;
@@ -683,10 +703,20 @@ void mpi_multiple_omega(int argc, char **argv){
 	start_i_j = rank * (npts_x_y / nprocs) + fmin(rank, npts_x_y % nprocs);
 	end_i_j = (rank + 1) * (npts_x_y / nprocs) + fmin(rank + 1, npts_x_y % nprocs);
 
-	double **results = create_2D_array(npts_o, 3);
+	// Temporary storage spaces for MPI communications
 	double **temp_cos_tilde = create_2D_array(npts_x, npts_l);
 	double **temp_sin_tilde = create_2D_array(npts_x, npts_l);
-	double final_N_cos, final_N_sin;
+	double final_N_cos, final_N_sin, final_N_cross;
+
+	// Phases specification
+	int npts_phi = 10;
+	double *phase = create_array(npts_phi);
+	int phi;
+	for(phi=0; phi<npts_phi; phi++){
+		phase[phi] = (pi / npts_phi) * phi;
+	}
+
+	double **results = create_2D_array(npts_o, npts_phi+1);
 	int o, p, i, l;
 
 	for(o=0; o<npts_o; o++){
@@ -727,24 +757,29 @@ void mpi_multiple_omega(int argc, char **argv){
 
 		MPI_Reduce(&N_cos, &final_N_cos, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 		MPI_Reduce(&N_sin, &final_N_sin, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+		MPI_Reduce(&N_cross, &final_N_cross, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
 		if (rank == 0){
 
 			N_cos = final_N_cos;
 			N_sin = final_N_sin;
-			sigma_cos = sqrt(6e0/N_cos) * sqrt(1e0/fsky);
-			sigma_sin = sqrt(6e0/N_sin) * sqrt(1e0/fsky);
+			N_cross = final_N_cross;
+
+			sigma_cos = sqrt(6e0/N_cos);
+			sigma_sin = sqrt(6e0/N_sin);
+
+			for(phi=0; phi<npts_phi; phi++){
+				results[o][phi+1] = error_bar_with_phase(phase[phi]);
+			}
 
 			// Print out the answer together with parameters used
 			print_results();
 
-			results[o][1] = sigma_cos;
-			results[o][2] = sigma_sin;
 		}
 	}
 
 	if(rank == 0){
-		write_2D_array(results, npts_o, 3, "mpi_multiple_omega_result");
+		write_2D_array(results, npts_o, npts_phi+1, "mpi_multiple_omega_and_phase_result");
 	}
 
 	// Clean up
@@ -756,6 +791,7 @@ void mpi_multiple_omega(int argc, char **argv){
 	free_2D_array(results);
 	free_array(gl_nodes);
 	free_array(gl_weights);
+	free_array(phase);
 	free_2D_int_array(i_j);
 	free_2D_int_array(i_l);
 	free_bessel();
