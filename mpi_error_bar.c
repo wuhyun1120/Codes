@@ -249,15 +249,22 @@ void precompute_tilde(){
 	// sin_tilde(x,l) = (2/pi) * integral{dk * sin(omega*k) * j_l(k*x) * Delta_l(k)}
 
 	double pref = 2e0/pi;
+	double *cos_vec = create_array(npts_k);
+	double *sin_vec = create_array(npts_k);
+	int k;
+	for(k=0; k<npts_k; k++){
+		cos_vec[k] = pref * step_k[k] * cos(omega * kvec[k]);
+		sin_vec[k] = pref * step_k[k] * cos(omega * kvec[k]);
+	}
 
-	#pragma omp parallel private(i,l,p)
+	#pragma omp parallel private(i,l,p,k)
 	{
 		// Initialise GSL tools for interpolation and integration
 		gsl_spline *bessel_spline = gsl_spline_alloc(gsl_interp_linear, bessel_npts_x);
 		gsl_interp_accel *bessel_acc = gsl_interp_accel_alloc();
 		double bes;	// temporary variables
 		double **trans = (double **) malloc(npts_p * sizeof(double *));
-		int n, k;
+		int n;
 
 		#pragma omp for
 		for(n=start_i_l; n<end_i_l; n++){
@@ -275,15 +282,9 @@ void precompute_tilde(){
 				bes = gsl_spline_eval(bessel_spline, xvec[i] * kvec[k], bessel_acc);
 
 				for(p=0; p<npts_p; p++){
-					cos_tilde[p][i][l] += step_k[k] * cos(omega * kvec[k]) * trans[p][k] * bes; 
-					sin_tilde[p][i][l] += step_k[k] * sin(omega * kvec[k]) * trans[p][k] * bes; 
+					cos_tilde[p][i][l] += cos_vec[k] * trans[p][k] * bes; 
+					sin_tilde[p][i][l] += sin_vec[k] * trans[p][k] * bes; 
 				}
-			}
-
-			// Multiply by 2/pi
-			for(p=0; p<npts_p; p++){
-				cos_tilde[p][i][l] *= pref;
-				sin_tilde[p][i][l] *= pref;
 			}
 			
 			gsl_interp_accel_reset(bessel_acc);
@@ -294,6 +295,11 @@ void precompute_tilde(){
 		gsl_interp_accel_free(bessel_acc);
 		free(trans);
 	}
+
+	free_array(cos_vec);
+	free_array(sin_vec);
+
+	
 }
 
 
@@ -400,7 +406,7 @@ void compute_error_bars(){
 
 	#pragma omp parallel
 	{
-		struct{
+		__attribute__((align(64))) struct{
 			double cc;
 			double cs;
 			double sc;
