@@ -58,7 +58,6 @@ static double N_cos, N_sin;
 static double sigma_cos, sigma_sin;
 
 static double N_cross;
-static double sigma_cross;
 
 int min(int x, int y){
 	 return (x < y) ? x : y;
@@ -66,7 +65,6 @@ int min(int x, int y){
 int max(int x, int y){
 	return (x > y) ? x : y;
 }
-
 
 void make_xvec(){
 	///* Makes a vector of x which is denser around the last scattering surface ~13900 */  
@@ -402,7 +400,12 @@ void compute_error_bars(){
 
 	#pragma omp parallel
 	{
-		double cc, cs, sc, ss;
+		struct{
+			double cc;
+			double cs;
+			double sc;
+			double ss;
+		} P;
 		double xyint;
 		int i, j, n, l, mu, p;
 
@@ -415,19 +418,19 @@ void compute_error_bars(){
 			
 			for(mu=0; mu<npts_mu; mu++){
 				// Sum over l and polarisation first
-				cc = cs = sc = ss = 0;
+				P.cc = P.cs = P.sc = P.ss = 0;
 				for(p=0; p<npts_p; p++){
 					for(l=0; l<npts_l; l++){
-						cc += cos_tilde[p][i][l] * cos_tilde[p][j][l] * legendre[mu][l];
-						cs += cos_tilde[p][i][l] * sin_tilde[p][j][l] * legendre[mu][l];
-						sc += sin_tilde[p][i][l] * cos_tilde[p][j][l] * legendre[mu][l];
-						ss += sin_tilde[p][i][l] * sin_tilde[p][j][l] * legendre[mu][l];
+						P.cc += cos_tilde[p][i][l] * cos_tilde[p][j][l] * legendre[mu][l];
+						P.cs += cos_tilde[p][i][l] * sin_tilde[p][j][l] * legendre[mu][l];
+						P.sc += sin_tilde[p][i][l] * cos_tilde[p][j][l] * legendre[mu][l];
+						P.ss += sin_tilde[p][i][l] * sin_tilde[p][j][l] * legendre[mu][l];
 					}	
 				}
 
-				N_cos += gl_weights[mu] * xyint * ((cc * cc * cc) + 3*(cc * ss * ss) - 3*(sc * sc * cc) - 3*(cs * cs * cc) + 6*(sc * cs * ss));
-				N_sin += gl_weights[mu] * xyint * ((ss * ss * ss) + 3*(ss * cc * cc) - 3*(cs * cs * ss) - 3*(sc * sc * ss) + 6*(cs * sc * cc));
-				N_cross += gl_weights[mu] * xyint * (3*(cs * cc * cc) - (cs * cs * cs) - 3*(cs * sc * sc) - 6*(cc * ss * sc) + 3*(cs * ss * ss));
+				N_cos += gl_weights[mu] * xyint * ((P.cc * P.cc * P.cc) + 3*(P.cc * P.ss * P.ss) - 3*(P.sc * P.sc * P.cc) - 3*(P.cs * P.cs * P.cc) + 6*(P.sc * P.cs * P.ss));
+				N_sin += gl_weights[mu] * xyint * ((P.ss * P.ss * P.ss) + 3*(P.ss * P.cc * P.cc) - 3*(P.cs * P.cs * P.ss) - 3*(P.sc * P.sc * P.ss) + 6*(P.cs * P.sc * P.cc));
+				N_cross += gl_weights[mu] * xyint * (3*(P.cs * P.cc * P.cc) - (P.cs * P.cs * P.cs) - 3*(P.cs * P.sc * P.sc) - 6*(P.cc * P.ss * P.sc) + 3*(P.cs * P.ss * P.ss));
 			}
 		}
 	}
@@ -440,10 +443,10 @@ void compute_error_bars(){
 	sigma_sin = sqrt(6e0/N_sin);
 }
 
-double error_bar_with_phase(double phi){
+double error_bar_with_phase(double phase){
 	/* Returns the error bar for S = sin(omega*k + phi) */
 
-	double c = cos(phi), s = sin(phi);
+	double c = cos(phase), s = sin(phase);
 	double N = (s*s) * N_cos + (c*c) * N_sin + (2*c*s) * N_cross;
 	return sqrt(6e0/N);
 }
@@ -709,14 +712,14 @@ void mpi_multiple_omega(int argc, char **argv){
 	double final_N_cos, final_N_sin, final_N_cross;
 
 	// Phases specification
-	int npts_phi = 10;
-	double *phase = create_array(npts_phi);
-	int phi;
-	for(phi=0; phi<npts_phi; phi++){
-		phase[phi] = (pi / npts_phi) * phi;
+	int npts_phase = 10;
+	double *phase = create_array(npts_phase);
+	int ph;
+	for(ph=0; ph<npts_phase; ph++){
+		phase[ph] = (pi / npts_phase) * ph;
 	}
 
-	double **results = create_2D_array(npts_o, npts_phi+1);
+	double **results = create_2D_array(npts_o, npts_phase+1);
 	int o, p, i, l;
 
 	for(o=0; o<npts_o; o++){
@@ -768,8 +771,8 @@ void mpi_multiple_omega(int argc, char **argv){
 			sigma_cos = sqrt(6e0/N_cos);
 			sigma_sin = sqrt(6e0/N_sin);
 
-			for(phi=0; phi<npts_phi; phi++){
-				results[o][phi+1] = error_bar_with_phase(phase[phi]);
+			for(ph=0; ph<npts_phase; ph++){
+				results[o][ph+1] = error_bar_with_phase(phase[ph]);
 			}
 
 			// Print out the answer together with parameters used
@@ -779,7 +782,7 @@ void mpi_multiple_omega(int argc, char **argv){
 	}
 
 	if(rank == 0){
-		write_2D_array(results, npts_o, npts_phi+1, "mpi_multiple_omega_and_phase_result");
+		write_2D_array(results, npts_o, npts_phase+1, "mpi_multiple_omega_and_phase_result");
 	}
 
 	// Clean up
