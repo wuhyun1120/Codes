@@ -7,6 +7,7 @@
 #include <mpi.h>
 #include <time.h>
 #include <string.h>
+#include <assert.h>
 
 #include "gl_integration.h" // For Gauss-Legendre integration
 #include "arrays.h"
@@ -16,7 +17,10 @@
 static int lmin = 2;
 static int lmax = 2000;
 static int npts_l; 			//  = lmax - lmin + 1;
+static int lpad;			// npts_l, rounded up to nearest multiple of 8
+
 static int npts_mu; 			//  = 3*lmax/2 + 1;
+static int mupad;			// npts_mu, rounded up to nearest multiple of 8
 
 static double *kvec;
 static double *step_k;
@@ -26,7 +30,7 @@ static int npts_k;
 
 static double *xvec;
 static double *step_x;
-static double xmax = 1.68e4;		// = 2 * tau0
+static double xmax = 1.68e4;		// 2 * tau0 ?
 static int npts_x;
 
 static double omega = 1e2;
@@ -74,7 +78,7 @@ void make_xvec(){
 //	double step1 = 10.0;
 	double step3 = 60.0;
 	double step2 = 30.0;
-	double step1 = 15.0;
+	double step1 = 10.0;
 //	double step3 = 30.0;
 //	double step2 = 15.0;
 //	double step1 = 10.0;
@@ -103,6 +107,7 @@ void make_xvec(){
 	}
 
 	npts_x = i;
+	assert(npts_x % 8 == 0);
 	xvec = (double *) malloc(npts_x * sizeof(double));
 
 	x = 0.0;
@@ -176,6 +181,7 @@ void initialise(){
 //	printf("loaded\n");
 	// Initialise some parameters and the x, k vectors
 	npts_l = lmax - lmin + 1;
+	lpad = (npts_l/8 + 1) * 8; 	// rounded up to the nearest multiple of 8
 
 	kvec = transfer_kvec;
 	npts_k = transfer_npts_k;
@@ -205,9 +211,9 @@ void initialise(){
 
 	if(do_polarisation == 0){
 		cos_tilde = (double ***) malloc(sizeof(double **));
-		cos_tilde[T] = create_2D_array(npts_x, npts_l);
+		cos_tilde[T] = create_aligned_2D_array(npts_x, lpad);
 		sin_tilde = (double ***) malloc(sizeof(double **));
-		sin_tilde[T] = create_2D_array(npts_x, npts_l);
+		sin_tilde[T] = create_aligned_2D_array(npts_x, lpad);
 
 		npts_p = 1;
 		npts_pp = 1; 	// Only C_TT used
@@ -215,11 +221,11 @@ void initialise(){
 
 	}else if(do_polarisation == 1){
 		cos_tilde = (double ***) malloc(2 * sizeof(double **));
-		cos_tilde[T] = create_2D_array(npts_x, npts_l);
-		cos_tilde[E] = create_2D_array(npts_x, npts_l);
+		cos_tilde[T] = create_aligned_2D_array(npts_x, lpad);
+		cos_tilde[E] = create_aligned_2D_array(npts_x, lpad);
 		sin_tilde = (double ***) malloc(2 * sizeof(double **));
-		sin_tilde[T] = create_2D_array(npts_x, npts_l);
-		sin_tilde[E] = create_2D_array(npts_x, npts_l);
+		sin_tilde[T] = create_aligned_2D_array(npts_x, lpad);
+		sin_tilde[E] = create_aligned_2D_array(npts_x, lpad);
 
 		npts_p = 2;
 		npts_pp = 3;	// C_TT, C_TE, C_EE used
@@ -363,12 +369,13 @@ void prepare_mu_integration(){
 	// Gauss-Legendre quadrature is precise for polynomials of degree up to 2n-1.
 	// Since we have three Pl's on our integrand, we require (3*lmax+1)/2 points
 	npts_mu = 3*lmax/2 + 1;
-	gl_nodes = create_array(npts_mu);
-	gl_weights = create_array(npts_mu);
+	mupad = (npts_mu/8 + 1) * 8;
+	gl_nodes = create_aligned_array(mupad);
+	gl_weights = create_aligned_array(mupad);
 	asy(gl_nodes, gl_weights, npts_mu); // Implemented in gl_integration.c
 
 	// Values of Legendre polynomials at the nodes are computed and stored 
-	legendre = create_2D_array(npts_mu, npts_l);
+	legendre = create_aligned_2D_array(mupad, lpad);
 	int mu, l;
 	#pragma omp parallel for private(mu,l)
 	for(mu=0; mu<npts_mu; mu++){
@@ -423,9 +430,11 @@ void compute_error_bars(){
 			xyint = step_x[i] * step_x[j] * (xvec[i]*xvec[i]) * (xvec[j]*xvec[j]);
 			
 			for(mu=0; mu<npts_mu; mu++){
+				P = {0.0, 0.0, 0.0, 0.0};
+
 				// Sum over l and polarisation first
-				P.cc = P.cs = P.sc = P.ss = 0;
 				for(p=0; p<npts_p; p++){
+					#pragma vector aligned
 					for(l=0; l<npts_l; l++){
 						P.cc += cos_tilde[p][i][l] * cos_tilde[p][j][l] * legendre[mu][l];
 						P.cs += cos_tilde[p][i][l] * sin_tilde[p][j][l] * legendre[mu][l];
@@ -620,13 +629,13 @@ void mpi_error_bars(int argc, char **argv){
 	// Now incorporate the results from different ranks
 
 	int p, i, l;
-	double **temp_cos_tilde = create_2D_array(npts_x, npts_l);
-	double **temp_sin_tilde = create_2D_array(npts_x, npts_l);
+	double **temp_cos_tilde = create_aligned_2D_array(npts_x, lpad);
+	double **temp_sin_tilde = create_aligned_2D_array(npts_x, lpad);
 
 	for(p=0; p<npts_p; p++){
 
-		MPI_Allreduce(&cos_tilde[p][0][0], &temp_cos_tilde[0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-		MPI_Allreduce(&sin_tilde[p][0][0], &temp_sin_tilde[0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+		MPI_Allreduce(&cos_tilde[p][0][0], &temp_cos_tilde[0][0], npts_x * lpad, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+		MPI_Allreduce(&sin_tilde[p][0][0], &temp_sin_tilde[0][0], npts_x * lpad, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
 		for(i=0; i<npts_x; i++){
 			for(l=0; l<npts_l; l++){
@@ -713,8 +722,8 @@ void mpi_multiple_omega(int argc, char **argv){
 	end_i_j = (rank + 1) * (npts_x_y / nprocs) + fmin(rank + 1, npts_x_y % nprocs);
 
 	// Temporary storage spaces for MPI communications
-	double **temp_cos_tilde = create_2D_array(npts_x, npts_l);
-	double **temp_sin_tilde = create_2D_array(npts_x, npts_l);
+	double **temp_cos_tilde = create_aligned_2D_array(npts_x, lpad);
+	double **temp_sin_tilde = create_aligned_2D_array(npts_x, lpad);
 	double final_N_cos, final_N_sin, final_N_cross;
 
 	// Phases specification
@@ -744,8 +753,8 @@ void mpi_multiple_omega(int argc, char **argv){
 		// Now incorporate the results from different ranks
 		for(p=0; p<npts_p; p++){
 
-			MPI_Allreduce(&cos_tilde[p][0][0], &temp_cos_tilde[0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-			MPI_Allreduce(&sin_tilde[p][0][0], &temp_sin_tilde[0][0], npts_x * npts_l, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+			MPI_Allreduce(&cos_tilde[p][0][0], &temp_cos_tilde[0][0], npts_x * lpad, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+			MPI_Allreduce(&sin_tilde[p][0][0], &temp_sin_tilde[0][0], npts_x * lpad, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
 			for(i=0; i<npts_x; i++){
 				for(l=0; l<npts_l; l++){

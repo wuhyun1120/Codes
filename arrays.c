@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <assert.h>
 
 int use_icc = 0; 
 
@@ -43,19 +44,30 @@ double ***create_3D_array(int d1, int d2, int d3){
 	return arr;
 }
 
-/*
+
+double *create_aligned_array(int d1){
+	assert(d1 % 8 == 0);
+	double *arr = (double *) aligned_alloc(64, d1 * sizeof(double));
+	if (arr == NULL){
+		printf("Insuffcient memory for creating a %d array. Try again, you can do it!\n", d1);
+		exit(1);
+	}
+	return arr;
+}
+
+
 double **create_aligned_2D_array(int d1, int d2){
-	int d1_pad = (d1 + 7) & ~7;
-	int d2_pad = (d2 + 7) & ~7;
-	double **arr = (double **) malloc(d1_pad * sizeof(double *));
-	arr[0] = (double *) malloc(d1_pad * d2_pad * sizeof(double));
+	assert(d1 % 8 == 0);
+	assert(d2 % 8 == 0);
+	double **arr = (double **) aligned_alloc(64, d1 * sizeof(double *));
+	arr[0] = (double *) aligned_alloc(64, d1 * d2 * sizeof(double));
 	if (arr[0] == NULL){
 		printf("Insuffcient memory for creating a %d X %d array. Try again, you can do it!\n", d1, d2);
 		exit(1);
 
 	}
+}
 
-*/
 
 void free_array(double *arr){
 	free(arr);
