@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <assert.h>
 
-int use_icc = 0; 
+const int use_icc = 0;
 
 double *create_array(int d1){
 	double *arr = (double *) malloc(d1 * sizeof(double));
@@ -74,6 +74,15 @@ void free_array(double *arr){
 }
 
 void free_2D_array(double **arr){
+	free(arr[0]);
+	free(arr);
+}
+
+void free_aligned_array(double *arr){
+	free(arr);
+}
+
+void free_aligned_2D_array(double **arr){
 	free(arr[0]);
 	free(arr);
 }

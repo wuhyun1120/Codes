@@ -430,8 +430,7 @@ void compute_error_bars(){
 			xyint = step_x[i] * step_x[j] * (xvec[i]*xvec[i]) * (xvec[j]*xvec[j]);
 			
 			for(mu=0; mu<npts_mu; mu++){
-				P = {0.0, 0.0, 0.0, 0.0};
-
+				P.ss = P.sc = P.cs = P.cc = 0;
 				// Sum over l and polarisation first
 				for(p=0; p<npts_p; p++){
 					#pragma vector aligned
@@ -489,8 +488,8 @@ void free_tilde(){
 	///* Free up the memory of cos, sin tildes */	
 	int p;
 	for(p=0; p<npts_p; p++){
-		free_2D_array(cos_tilde[p]);
-		free_2D_array(sin_tilde[p]);
+		free_aligned_2D_array(cos_tilde[p]);
+		free_aligned_2D_array(sin_tilde[p]);
 	}
 }
 
@@ -529,9 +528,9 @@ void error_bars(){
 	// Clean up
 	free_tilde();
 	free_2D_array(C);
-	free_2D_array(legendre);
-	free_array(gl_nodes);
-	free_array(gl_weights);
+	free_aligned_2D_array(legendre);
+	free_aligned_array(gl_nodes);
+	free_aligned_array(gl_weights);
 	free_2D_int_array(i_j);
 	free_2D_int_array(i_l);
 	
@@ -580,10 +579,10 @@ void multiple_omega(){
 	// Clean up
 	free_tilde();
 	free_2D_array(C);
-	free_2D_array(legendre);
+	free_aligned_2D_array(legendre);
 	free_2D_array(results);
-	free_array(gl_nodes);
-	free_array(gl_weights);
+	free_aligned_array(gl_nodes);
+	free_aligned_array(gl_weights);
 	free_2D_int_array(i_j);
 	free_2D_int_array(i_l);
 	free_bessel();
@@ -647,8 +646,8 @@ void mpi_error_bars(int argc, char **argv){
 		MPI_Barrier(MPI_COMM_WORLD);
 	}
 
-	free_2D_array(temp_cos_tilde);
-	free_2D_array(temp_sin_tilde);
+	free_aligned_2D_array(temp_cos_tilde);
+	free_aligned_2D_array(temp_sin_tilde);
 
 	// Compute the Gauss-Legendre coefficients and store Legendre polynomial values 
 	prepare_mu_integration();	
@@ -686,9 +685,9 @@ void mpi_error_bars(int argc, char **argv){
 	// Clean up
 	free_tilde();
 	free_2D_array(C);
-	free_2D_array(legendre);
-	free_array(gl_nodes);
-	free_array(gl_weights);
+	free_aligned_2D_array(legendre);
+	free_aligned_array(gl_nodes);
+	free_aligned_array(gl_weights);
 	free_2D_int_array(i_j);
 	free_2D_int_array(i_l);
 
@@ -803,12 +802,12 @@ void mpi_multiple_omega(int argc, char **argv){
 	// Clean up
 	free_tilde();
 	free_2D_array(C);
-	free_2D_array(legendre);
-	free_2D_array(temp_cos_tilde);
-	free_2D_array(temp_sin_tilde);
-	free_2D_array(results);
-	free_array(gl_nodes);
-	free_array(gl_weights);
+	free_aligned_2D_array(legendre);
+	free_aligned_2D_array(temp_cos_tilde);
+	free_aligned_2D_array(temp_sin_tilde);
+	free_aligned_2D_array(results);
+	free_aligned_array(gl_nodes);
+	free_aligned_array(gl_weights);
 	free_array(phase);
 	free_2D_int_array(i_j);
 	free_2D_int_array(i_l);

@@ -9,7 +9,9 @@ double *create_aligned_array(int d1);
 double **create_aligned_2D_array(int d1, int d2);
 
 void free_array(double *arr);
+void free_aligned_array(double *arr);
 void free_2D_array(double **arr);
+void free_aligned_2D_array(double **arr);
 void free_int_array(int *arr);
 void free_2D_int_array(int **arr);
 
